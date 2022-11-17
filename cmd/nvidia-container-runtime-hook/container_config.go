@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -340,7 +339,7 @@ func getNvidiaConfig(hookConfig *HookConfig, image image.CUDA, mounts []Mount, p
 	}
 }
 
-func getContainerConfig(hook HookConfig) (config containerConfig) {
+func getContainerConfig(hook HookConfig, OCIConfigPath string) (config containerConfig) {
 	var h HookState
 	d := json.NewDecoder(os.Stdin)
 	if err := d.Decode(&h); err != nil {
@@ -352,7 +351,8 @@ func getContainerConfig(hook HookConfig) (config containerConfig) {
 		b = h.BundlePath
 	}
 
-	s := loadSpec(path.Join(b, "config.json"))
+	log.Println("Using config path: ", OCIConfigPath)
+	s := loadSpec(OCIConfigPath)
 
 	image, err := image.New(
 		image.WithEnv(s.Process.Env),
