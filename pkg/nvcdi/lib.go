@@ -19,13 +19,18 @@ package nvcdi
 import (
 	"fmt"
 
+	"github.com/NVIDIA/go-nvlib/pkg/nvlib/device"
+	"github.com/NVIDIA/go-nvlib/pkg/nvlib/info"
+	"github.com/NVIDIA/go-nvml/pkg/nvml"
+	"tags.cncf.io/container-device-interface/pkg/cdi"
+
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/config/image"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/lookup/root"
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/nvsandboxutils"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/platform-support/tegra/csv"
 	"github.com/NVIDIA/nvidia-container-toolkit/pkg/nvcdi/spec"
 	"github.com/NVIDIA/nvidia-container-toolkit/pkg/nvcdi/transform"
-	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvlib/device"
-	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvlib/info"
-	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvml"
 )
 
 type wrapper struct {
@@ -40,11 +45,15 @@ type wrapper struct {
 type nvcdilib struct {
 	logger             logger.Interface
 	nvmllib            nvml.Interface
+	nvsandboxutilslib  nvsandboxutils.Interface
 	mode               string
 	devicelib          device.Interface
-	deviceNamer        DeviceNamer
+	deviceNamers       DeviceNamers
 	driverRoot         string
-	nvidiaCTKPath      string
+	devRoot            string
+	nvidiaCDIHookPath  string
+	ldconfigPath       string
+	configSearchPaths  []string
 	librarySearchPaths []string
 
 	csvFiles          []string
@@ -53,6 +62,7 @@ type nvcdilib struct {
 	vendor string
 	class  string
 
+	driver  *root.Driver
 	infolib info.Interface
 
 	mergedDeviceOptions []transform.MergedDeviceOption
@@ -70,17 +80,59 @@ func New(opts ...Option) (Interface, error) {
 	if l.logger == nil {
 		l.logger = logger.New()
 	}
-	if l.deviceNamer == nil {
-		l.deviceNamer, _ = NewDeviceNamer(DeviceNameStrategyIndex)
+	if len(l.deviceNamers) == 0 {
+		indexNamer, _ := NewDeviceNamer(DeviceNameStrategyIndex)
+		l.deviceNamers = []DeviceNamer{indexNamer}
+	}
+	if l.nvidiaCDIHookPath == "" {
+		l.nvidiaCDIHookPath = "/usr/bin/nvidia-cdi-hook"
 	}
 	if l.driverRoot == "" {
 		l.driverRoot = "/"
 	}
-	if l.nvidiaCTKPath == "" {
-		l.nvidiaCTKPath = "/usr/bin/nvidia-ctk"
+	if l.devRoot == "" {
+		l.devRoot = l.driverRoot
+	}
+	l.driver = root.New(
+		root.WithLogger(l.logger),
+		root.WithDriverRoot(l.driverRoot),
+		root.WithLibrarySearchPaths(l.librarySearchPaths...),
+	)
+	if l.nvmllib == nil {
+		var nvmlOpts []nvml.LibraryOption
+		candidates, err := l.driver.Libraries().Locate("libnvidia-ml.so.1")
+		if err != nil {
+			l.logger.Warningf("Ignoring error in locating libnvidia-ml.so.1: %v", err)
+		} else {
+			libNvidiaMlPath := candidates[0]
+			l.logger.Infof("Using %v", libNvidiaMlPath)
+			nvmlOpts = append(nvmlOpts, nvml.WithLibraryPath(libNvidiaMlPath))
+		}
+		l.nvmllib = nvml.New(nvmlOpts...)
+	}
+	if l.nvsandboxutilslib == nil {
+		var nvsandboxutilsOpts []nvsandboxutils.LibraryOption
+		// Set the library path for libnvidia-sandboxutils
+		candidates, err := l.driver.Libraries().Locate("libnvidia-sandboxutils.so.1")
+		if err != nil {
+			l.logger.Warningf("Ignoring error in locating libnvidia-sandboxutils.so.1: %v", err)
+		} else {
+			libNvidiaSandboxutilsPath := candidates[0]
+			l.logger.Infof("Using %v", libNvidiaSandboxutilsPath)
+			nvsandboxutilsOpts = append(nvsandboxutilsOpts, nvsandboxutils.WithLibraryPath(libNvidiaSandboxutilsPath))
+		}
+		l.nvsandboxutilslib = nvsandboxutils.New(nvsandboxutilsOpts...)
+	}
+	if l.devicelib == nil {
+		l.devicelib = device.New(l.nvmllib)
 	}
 	if l.infolib == nil {
-		l.infolib = info.New()
+		l.infolib = info.New(
+			info.WithRoot(l.driverRoot),
+			info.WithLogger(l.logger),
+			info.WithNvmlLib(l.nvmllib),
+			info.WithDeviceLib(l.devicelib),
+		)
 	}
 
 	var lib Interface
@@ -96,13 +148,6 @@ func New(opts ...Option) (Interface, error) {
 		}
 		lib = (*managementlib)(l)
 	case ModeNvml:
-		if l.nvmllib == nil {
-			l.nvmllib = nvml.New()
-		}
-		if l.devicelib == nil {
-			l.devicelib = device.New(device.WithNvml(l.nvmllib))
-		}
-
 		lib = (*nvmllib)(l)
 	case ModeWsl:
 		lib = (*wsllib)(l)
@@ -150,37 +195,51 @@ func (l *wrapper) GetSpec() (spec.Interface, error) {
 	)
 }
 
+// GetCommonEdits returns the wrapped edits and adds additional edits on top.
+func (m *wrapper) GetCommonEdits() (*cdi.ContainerEdits, error) {
+	edits, err := m.Interface.GetCommonEdits()
+	if err != nil {
+		return nil, err
+	}
+	edits.Env = append(edits.Env, image.EnvVarNvidiaVisibleDevices+"=void")
+
+	return edits, nil
+}
+
 // resolveMode resolves the mode for CDI spec generation based on the current system.
 func (l *nvcdilib) resolveMode() (rmode string) {
 	if l.mode != ModeAuto {
 		return l.mode
 	}
 	defer func() {
-		l.logger.Infof("Auto-detected mode as %q", rmode)
+		l.logger.Infof("Auto-detected mode as '%v'", rmode)
 	}()
 
-	isWSL, reason := l.infolib.HasDXCore()
-	l.logger.Debugf("Is WSL-based system? %v: %v", isWSL, reason)
-
-	if isWSL {
+	platform := l.infolib.ResolvePlatform()
+	switch platform {
+	case info.PlatformNVML:
+		return ModeNvml
+	case info.PlatformTegra:
+		return ModeCSV
+	case info.PlatformWSL:
 		return ModeWsl
 	}
-
-	isNvml, reason := l.infolib.HasNvml()
-	l.logger.Debugf("Is NVML-based system? %v: %v", isNvml, reason)
-
-	isTegra, reason := l.infolib.IsTegraSystem()
-	l.logger.Debugf("Is Tegra-based system? %v: %v", isTegra, reason)
-
-	if isTegra && !isNvml {
-		return ModeCSV
-	}
-
+	l.logger.Warningf("Unsupported platform detected: %v; assuming %v", platform, ModeNvml)
 	return ModeNvml
 }
 
 // getCudaVersion returns the CUDA version of the current system.
 func (l *nvcdilib) getCudaVersion() (string, error) {
+	version, err := l.getCudaVersionNvsandboxutils()
+	if err == nil {
+		return version, err
+	}
+
+	// Fallback to NVML
+	return l.getCudaVersionNvml()
+}
+
+func (l *nvcdilib) getCudaVersionNvml() (string, error) {
 	if hasNVML, reason := l.infolib.HasNvml(); !hasNVML {
 		return "", fmt.Errorf("nvml not detected: %v", reason)
 	}
@@ -191,11 +250,28 @@ func (l *nvcdilib) getCudaVersion() (string, error) {
 	if r != nvml.SUCCESS {
 		return "", fmt.Errorf("failed to initialize nvml: %v", r)
 	}
-	defer l.nvmllib.Shutdown()
+	defer func() {
+		if r := l.nvmllib.Shutdown(); r != nvml.SUCCESS {
+			l.logger.Warningf("failed to shutdown NVML: %v", r)
+		}
+	}()
 
 	version, r := l.nvmllib.SystemGetDriverVersion()
 	if r != nvml.SUCCESS {
 		return "", fmt.Errorf("failed to get driver version: %v", r)
+	}
+	return version, nil
+}
+
+func (l *nvcdilib) getCudaVersionNvsandboxutils() (string, error) {
+	if l.nvsandboxutilslib == nil {
+		return "", fmt.Errorf("libnvsandboxutils is not available")
+	}
+
+	// Sandboxutils initialization should happen before this function is called
+	version, ret := l.nvsandboxutilslib.GetDriverVersion()
+	if ret != nvsandboxutils.SUCCESS {
+		return "", fmt.Errorf("%v", ret)
 	}
 	return version, nil
 }

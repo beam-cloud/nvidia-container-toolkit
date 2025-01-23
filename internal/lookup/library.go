@@ -16,54 +16,40 @@
 
 package lookup
 
-import (
-	"fmt"
-	"strings"
+// NewLibraryLocator creates a library locator using the specified options.
+func NewLibraryLocator(opts ...Option) Locator {
+	b := newBuilder(opts...)
 
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/ldcache"
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
-)
-
-type library struct {
-	logger  logger.Interface
-	symlink Locator
-	cache   ldcache.LDCache
-}
-
-var _ Locator = (*library)(nil)
-
-// NewLibraryLocator creates a library locator using the specified logger.
-func NewLibraryLocator(logger logger.Interface, root string) (Locator, error) {
-	cache, err := ldcache.New(logger, root)
-	if err != nil {
-		return nil, fmt.Errorf("error loading ldcache: %v", err)
+	// If search paths are already specified, we return a locator for the specified search paths.
+	if len(b.searchPaths) > 0 {
+		return NewSymlinkLocator(
+			WithLogger(b.logger),
+			WithSearchPaths(b.searchPaths...),
+			WithRoot("/"),
+		)
 	}
 
-	l := library{
-		logger:  logger,
-		symlink: NewSymlinkLocator(WithLogger(logger), WithRoot(root)),
-		cache:   cache,
-	}
+	opts = append(opts,
+		WithSearchPaths([]string{
+			"/",
+			"/usr/lib64",
+			"/usr/lib/x86_64-linux-gnu",
+			"/usr/lib/aarch64-linux-gnu",
+			"/usr/lib/x86_64-linux-gnu/nvidia/current",
+			"/usr/lib/aarch64-linux-gnu/nvidia/current",
+			"/lib64",
+			"/lib/x86_64-linux-gnu",
+			"/lib/aarch64-linux-gnu",
+			"/lib/x86_64-linux-gnu/nvidia/current",
+			"/lib/aarch64-linux-gnu/nvidia/current",
+		}...),
+	)
+	// We construct a symlink locator for expected library locations.
+	symlinkLocator := NewSymlinkLocator(opts...)
 
-	return &l, nil
-}
-
-// Locate finds the specified libraryname.
-// If the input is a library name, the ldcache is searched otherwise the
-// provided path is resolved as a symlink.
-func (l library) Locate(libname string) ([]string, error) {
-	if strings.Contains(libname, "/") {
-		return l.symlink.Locate(libname)
-	}
-
-	paths32, paths64 := l.cache.Lookup(libname)
-	if len(paths32) > 0 {
-		l.logger.Warningf("Ignoring 32-bit libraries for %v: %v", libname, paths32)
-	}
-
-	if len(paths64) == 0 {
-		return nil, fmt.Errorf("64-bit library %v not found", libname)
-	}
-
-	return paths64, nil
+	l := First(
+		symlinkLocator,
+		NewLdcacheLocator(opts...),
+	)
+	return l
 }

@@ -20,9 +20,9 @@ import (
 	"fmt"
 	"strings"
 
-	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvlib/device"
-	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvlib/info"
-	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvml"
+	"github.com/NVIDIA/go-nvlib/pkg/nvlib/device"
+	"github.com/NVIDIA/go-nvlib/pkg/nvlib/info"
+	"github.com/NVIDIA/go-nvml/pkg/nvml"
 )
 
 // additionalInfo allows for the info.Interface to be extened to implement the infoInterface.
@@ -52,7 +52,9 @@ func (i additionalInfo) UsesNVGPUModule() (uses bool, reason string) {
 	if ret != nvml.SUCCESS {
 		return false, fmt.Sprintf("failed to initialize nvml: %v", ret)
 	}
-	defer i.nvmllib.Shutdown()
+	defer func() {
+		_ = i.nvmllib.Shutdown()
+	}()
 
 	var names []string
 

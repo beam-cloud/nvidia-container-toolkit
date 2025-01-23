@@ -13,7 +13,7 @@
 # limitations under the License.
 
 LIB_NAME := nvidia-container-toolkit
-LIB_VERSION := 1.14.2
+LIB_VERSION := 1.17.3
 LIB_TAG :=
 
 # The package version is the combination of the library version and tag.
@@ -21,17 +21,10 @@ LIB_TAG :=
 PACKAGE_VERSION := $(LIB_VERSION)$(if $(LIB_TAG),~$(LIB_TAG))
 PACKAGE_REVISION := 1
 
-# Specify the nvidia-docker2 and nvidia-container-runtime package versions.
-# Note: The build tooling uses `LIB_TAG` above as the version tag.
-# This is appended to the versions below if specified.
-NVIDIA_DOCKER_VERSION := 2.14.0
-NVIDIA_CONTAINER_RUNTIME_VERSION := 3.14.0
+GOLANG_VERSION := $(shell ./hack/golang-version.sh)
 
-# Specify the expected libnvidia-container0 version for arm64-based ubuntu builds.
-LIBNVIDIA_CONTAINER0_VERSION := 0.10.0+jetpack
-
-CUDA_VERSION := 12.2.0
-GOLANG_VERSION := 1.20.5
+BUILDIMAGE_TAG ?= devel-go$(GOLANG_VERSION)
+BUILDIMAGE ?=  $(LIB_NAME):$(BUILDIMAGE_TAG)
 
 GIT_COMMIT ?= $(shell git describe --match="" --dirty --long --always --abbrev=40 2> /dev/null || echo "")
 GIT_COMMIT_SHORT ?= $(shell git rev-parse --short HEAD 2> /dev/null || echo "")

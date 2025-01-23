@@ -1,12 +1,14 @@
 package main
 
 import (
-	"fmt"
 	"path/filepath"
 	"testing"
 
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/config/image"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/config"
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/config/image"
 )
 
 func TestGetNvidiaConfig(t *testing.T) {
@@ -14,7 +16,7 @@ func TestGetNvidiaConfig(t *testing.T) {
 		description    string
 		env            map[string]string
 		privileged     bool
-		hookConfig     *HookConfig
+		hookConfig     *hookConfig
 		expectedConfig *nvidiaConfig
 		expectedPanic  bool
 	}{
@@ -33,11 +35,11 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Legacy image, no devices, no capabilities, no requirements",
 			env: map[string]string{
-				envCUDAVersion: "9.0",
+				image.EnvVarCudaVersion: "9.0",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "all",
+				Devices:            []string{"all"},
 				DriverCapabilities: image.SupportedDriverCapabilities.String(),
 				Requirements:       []string{"cuda>=9.0"},
 			},
@@ -45,12 +47,12 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Legacy image, devices 'all', no capabilities, no requirements",
 			env: map[string]string{
-				envCUDAVersion:      "9.0",
-				envNVVisibleDevices: "all",
+				image.EnvVarCudaVersion:          "9.0",
+				image.EnvVarNvidiaVisibleDevices: "all",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "all",
+				Devices:            []string{"all"},
 				DriverCapabilities: image.SupportedDriverCapabilities.String(),
 				Requirements:       []string{"cuda>=9.0"},
 			},
@@ -58,8 +60,8 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Legacy image, devices 'empty', no capabilities, no requirements",
 			env: map[string]string{
-				envCUDAVersion:      "9.0",
-				envNVVisibleDevices: "",
+				image.EnvVarCudaVersion:          "9.0",
+				image.EnvVarNvidiaVisibleDevices: "",
 			},
 			privileged:     false,
 			expectedConfig: nil,
@@ -67,8 +69,8 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Legacy image, devices 'void', no capabilities, no requirements",
 			env: map[string]string{
-				envCUDAVersion:      "9.0",
-				envNVVisibleDevices: "void",
+				image.EnvVarCudaVersion:          "9.0",
+				image.EnvVarNvidiaVisibleDevices: "void",
 			},
 			privileged:     false,
 			expectedConfig: nil,
@@ -76,12 +78,12 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Legacy image, devices 'none', no capabilities, no requirements",
 			env: map[string]string{
-				envCUDAVersion:      "9.0",
-				envNVVisibleDevices: "none",
+				image.EnvVarCudaVersion:          "9.0",
+				image.EnvVarNvidiaVisibleDevices: "none",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "",
+				Devices:            []string{""},
 				DriverCapabilities: image.SupportedDriverCapabilities.String(),
 				Requirements:       []string{"cuda>=9.0"},
 			},
@@ -89,12 +91,12 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Legacy image, devices set, no capabilities, no requirements",
 			env: map[string]string{
-				envCUDAVersion:      "9.0",
-				envNVVisibleDevices: "gpu0,gpu1",
+				image.EnvVarCudaVersion:          "9.0",
+				image.EnvVarNvidiaVisibleDevices: "gpu0,gpu1",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "gpu0,gpu1",
+				Devices:            []string{"gpu0", "gpu1"},
 				DriverCapabilities: image.SupportedDriverCapabilities.String(),
 				Requirements:       []string{"cuda>=9.0"},
 			},
@@ -102,13 +104,13 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Legacy image, devices set, capabilities 'empty', no requirements",
 			env: map[string]string{
-				envCUDAVersion:          "9.0",
-				envNVVisibleDevices:     "gpu0,gpu1",
-				envNVDriverCapabilities: "",
+				image.EnvVarCudaVersion:              "9.0",
+				image.EnvVarNvidiaVisibleDevices:     "gpu0,gpu1",
+				image.EnvVarNvidiaDriverCapabilities: "",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "gpu0,gpu1",
+				Devices:            []string{"gpu0", "gpu1"},
 				DriverCapabilities: image.DefaultDriverCapabilities.String(),
 				Requirements:       []string{"cuda>=9.0"},
 			},
@@ -116,13 +118,13 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Legacy image, devices set, capabilities 'all', no requirements",
 			env: map[string]string{
-				envCUDAVersion:          "9.0",
-				envNVVisibleDevices:     "gpu0,gpu1",
-				envNVDriverCapabilities: "all",
+				image.EnvVarCudaVersion:              "9.0",
+				image.EnvVarNvidiaVisibleDevices:     "gpu0,gpu1",
+				image.EnvVarNvidiaDriverCapabilities: "all",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "gpu0,gpu1",
+				Devices:            []string{"gpu0", "gpu1"},
 				DriverCapabilities: image.SupportedDriverCapabilities.String(),
 				Requirements:       []string{"cuda>=9.0"},
 			},
@@ -130,13 +132,13 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Legacy image, devices set, capabilities set, no requirements",
 			env: map[string]string{
-				envCUDAVersion:          "9.0",
-				envNVVisibleDevices:     "gpu0,gpu1",
-				envNVDriverCapabilities: "video,display",
+				image.EnvVarCudaVersion:              "9.0",
+				image.EnvVarNvidiaVisibleDevices:     "gpu0,gpu1",
+				image.EnvVarNvidiaDriverCapabilities: "video,display",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "gpu0,gpu1",
+				Devices:            []string{"gpu0", "gpu1"},
 				DriverCapabilities: "display,video",
 				Requirements:       []string{"cuda>=9.0"},
 			},
@@ -144,15 +146,15 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Legacy image, devices set, capabilities set, requirements set",
 			env: map[string]string{
-				envCUDAVersion:              "9.0",
-				envNVVisibleDevices:         "gpu0,gpu1",
-				envNVDriverCapabilities:     "video,display",
-				envNVRequirePrefix + "REQ0": "req0=true",
-				envNVRequirePrefix + "REQ1": "req1=false",
+				image.EnvVarCudaVersion:              "9.0",
+				image.EnvVarNvidiaVisibleDevices:     "gpu0,gpu1",
+				image.EnvVarNvidiaDriverCapabilities: "video,display",
+				image.NvidiaRequirePrefix + "REQ0":   "req0=true",
+				image.NvidiaRequirePrefix + "REQ1":   "req1=false",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "gpu0,gpu1",
+				Devices:            []string{"gpu0", "gpu1"},
 				DriverCapabilities: "display,video",
 				Requirements:       []string{"cuda>=9.0", "req0=true", "req1=false"},
 			},
@@ -160,33 +162,33 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Legacy image, devices set, capabilities set, requirements set, disable requirements",
 			env: map[string]string{
-				envCUDAVersion:              "9.0",
-				envNVVisibleDevices:         "gpu0,gpu1",
-				envNVDriverCapabilities:     "video,display",
-				envNVRequirePrefix + "REQ0": "req0=true",
-				envNVRequirePrefix + "REQ1": "req1=false",
-				envNVDisableRequire:         "true",
+				image.EnvVarCudaVersion:              "9.0",
+				image.EnvVarNvidiaVisibleDevices:     "gpu0,gpu1",
+				image.EnvVarNvidiaDriverCapabilities: "video,display",
+				image.NvidiaRequirePrefix + "REQ0":   "req0=true",
+				image.NvidiaRequirePrefix + "REQ1":   "req1=false",
+				image.EnvVarNvidiaDisableRequire:     "true",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "gpu0,gpu1",
+				Devices:            []string{"gpu0", "gpu1"},
 				DriverCapabilities: "display,video",
 				Requirements:       []string{},
 			},
 		},
 		{
-			description: "Modern image, no devices, no capabilities, no requirements, no envCUDAVersion",
+			description: "Modern image, no devices, no capabilities, no requirements, no image.EnvVarCudaVersion",
 			env: map[string]string{
-				envNVRequireCUDA: "cuda>=9.0",
+				image.EnvVarNvidiaRequireCuda: "cuda>=9.0",
 			},
 			privileged:     false,
 			expectedConfig: nil,
 		},
 		{
-			description: "Modern image, no devices, no capabilities, no requirement, envCUDAVersion set",
+			description: "Modern image, no devices, no capabilities, no requirement, image.EnvVarCudaVersion set",
 			env: map[string]string{
-				envCUDAVersion:   "9.0",
-				envNVRequireCUDA: "cuda>=9.0",
+				image.EnvVarCudaVersion:       "9.0",
+				image.EnvVarNvidiaRequireCuda: "cuda>=9.0",
 			},
 			privileged:     false,
 			expectedConfig: nil,
@@ -194,12 +196,12 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Modern image, devices 'all', no capabilities, no requirements",
 			env: map[string]string{
-				envNVRequireCUDA:    "cuda>=9.0",
-				envNVVisibleDevices: "all",
+				image.EnvVarNvidiaRequireCuda:    "cuda>=9.0",
+				image.EnvVarNvidiaVisibleDevices: "all",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "all",
+				Devices:            []string{"all"},
 				DriverCapabilities: image.DefaultDriverCapabilities.String(),
 				Requirements:       []string{"cuda>=9.0"},
 			},
@@ -207,8 +209,8 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Modern image, devices 'empty', no capabilities, no requirements",
 			env: map[string]string{
-				envNVRequireCUDA:    "cuda>=9.0",
-				envNVVisibleDevices: "",
+				image.EnvVarNvidiaRequireCuda:    "cuda>=9.0",
+				image.EnvVarNvidiaVisibleDevices: "",
 			},
 			privileged:     false,
 			expectedConfig: nil,
@@ -216,8 +218,8 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Modern image, devices 'void', no capabilities, no requirements",
 			env: map[string]string{
-				envNVRequireCUDA:    "cuda>=9.0",
-				envNVVisibleDevices: "void",
+				image.EnvVarNvidiaRequireCuda:    "cuda>=9.0",
+				image.EnvVarNvidiaVisibleDevices: "void",
 			},
 			privileged:     false,
 			expectedConfig: nil,
@@ -225,12 +227,12 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Modern image, devices 'none', no capabilities, no requirements",
 			env: map[string]string{
-				envNVRequireCUDA:    "cuda>=9.0",
-				envNVVisibleDevices: "none",
+				image.EnvVarNvidiaRequireCuda:    "cuda>=9.0",
+				image.EnvVarNvidiaVisibleDevices: "none",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "",
+				Devices:            []string{""},
 				DriverCapabilities: image.DefaultDriverCapabilities.String(),
 				Requirements:       []string{"cuda>=9.0"},
 			},
@@ -238,12 +240,12 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Modern image, devices set, no capabilities, no requirements",
 			env: map[string]string{
-				envNVRequireCUDA:    "cuda>=9.0",
-				envNVVisibleDevices: "gpu0,gpu1",
+				image.EnvVarNvidiaRequireCuda:    "cuda>=9.0",
+				image.EnvVarNvidiaVisibleDevices: "gpu0,gpu1",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "gpu0,gpu1",
+				Devices:            []string{"gpu0", "gpu1"},
 				DriverCapabilities: image.DefaultDriverCapabilities.String(),
 				Requirements:       []string{"cuda>=9.0"},
 			},
@@ -251,13 +253,13 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Modern image, devices set, capabilities 'empty', no requirements",
 			env: map[string]string{
-				envNVRequireCUDA:        "cuda>=9.0",
-				envNVVisibleDevices:     "gpu0,gpu1",
-				envNVDriverCapabilities: "",
+				image.EnvVarNvidiaRequireCuda:        "cuda>=9.0",
+				image.EnvVarNvidiaVisibleDevices:     "gpu0,gpu1",
+				image.EnvVarNvidiaDriverCapabilities: "",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "gpu0,gpu1",
+				Devices:            []string{"gpu0", "gpu1"},
 				DriverCapabilities: image.DefaultDriverCapabilities.String(),
 				Requirements:       []string{"cuda>=9.0"},
 			},
@@ -265,13 +267,13 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Modern image, devices set, capabilities 'all', no requirements",
 			env: map[string]string{
-				envNVRequireCUDA:        "cuda>=9.0",
-				envNVVisibleDevices:     "gpu0,gpu1",
-				envNVDriverCapabilities: "all",
+				image.EnvVarNvidiaRequireCuda:        "cuda>=9.0",
+				image.EnvVarNvidiaVisibleDevices:     "gpu0,gpu1",
+				image.EnvVarNvidiaDriverCapabilities: "all",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "gpu0,gpu1",
+				Devices:            []string{"gpu0", "gpu1"},
 				DriverCapabilities: image.SupportedDriverCapabilities.String(),
 				Requirements:       []string{"cuda>=9.0"},
 			},
@@ -279,13 +281,13 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Modern image, devices set, capabilities set, no requirements",
 			env: map[string]string{
-				envNVRequireCUDA:        "cuda>=9.0",
-				envNVVisibleDevices:     "gpu0,gpu1",
-				envNVDriverCapabilities: "video,display",
+				image.EnvVarNvidiaRequireCuda:        "cuda>=9.0",
+				image.EnvVarNvidiaVisibleDevices:     "gpu0,gpu1",
+				image.EnvVarNvidiaDriverCapabilities: "video,display",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "gpu0,gpu1",
+				Devices:            []string{"gpu0", "gpu1"},
 				DriverCapabilities: "display,video",
 				Requirements:       []string{"cuda>=9.0"},
 			},
@@ -293,15 +295,15 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Modern image, devices set, capabilities set, requirements set",
 			env: map[string]string{
-				envNVRequireCUDA:            "cuda>=9.0",
-				envNVVisibleDevices:         "gpu0,gpu1",
-				envNVDriverCapabilities:     "video,display",
-				envNVRequirePrefix + "REQ0": "req0=true",
-				envNVRequirePrefix + "REQ1": "req1=false",
+				image.EnvVarNvidiaRequireCuda:        "cuda>=9.0",
+				image.EnvVarNvidiaVisibleDevices:     "gpu0,gpu1",
+				image.EnvVarNvidiaDriverCapabilities: "video,display",
+				image.NvidiaRequirePrefix + "REQ0":   "req0=true",
+				image.NvidiaRequirePrefix + "REQ1":   "req1=false",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "gpu0,gpu1",
+				Devices:            []string{"gpu0", "gpu1"},
 				DriverCapabilities: "display,video",
 				Requirements:       []string{"cuda>=9.0", "req0=true", "req1=false"},
 			},
@@ -309,16 +311,16 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Modern image, devices set, capabilities set, requirements set, disable requirements",
 			env: map[string]string{
-				envNVRequireCUDA:            "cuda>=9.0",
-				envNVVisibleDevices:         "gpu0,gpu1",
-				envNVDriverCapabilities:     "video,display",
-				envNVRequirePrefix + "REQ0": "req0=true",
-				envNVRequirePrefix + "REQ1": "req1=false",
-				envNVDisableRequire:         "true",
+				image.EnvVarNvidiaRequireCuda:        "cuda>=9.0",
+				image.EnvVarNvidiaVisibleDevices:     "gpu0,gpu1",
+				image.EnvVarNvidiaDriverCapabilities: "video,display",
+				image.NvidiaRequirePrefix + "REQ0":   "req0=true",
+				image.NvidiaRequirePrefix + "REQ1":   "req1=false",
+				image.EnvVarNvidiaDisableRequire:     "true",
 			},
 			privileged: false,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "gpu0,gpu1",
+				Devices:            []string{"gpu0", "gpu1"},
 				DriverCapabilities: "display,video",
 				Requirements:       []string{},
 			},
@@ -326,12 +328,12 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "No cuda envs, devices 'all'",
 			env: map[string]string{
-				envNVVisibleDevices: "all",
+				image.EnvVarNvidiaVisibleDevices: "all",
 			},
 			privileged: false,
 
 			expectedConfig: &nvidiaConfig{
-				Devices:            "all",
+				Devices:            []string{"all"},
 				DriverCapabilities: image.DefaultDriverCapabilities.String(),
 				Requirements:       []string{},
 			},
@@ -339,13 +341,13 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Modern image, devices 'all', migConfig set, privileged",
 			env: map[string]string{
-				envNVRequireCUDA:      "cuda>=9.0",
-				envNVVisibleDevices:   "all",
-				envNVMigConfigDevices: "mig0,mig1",
+				image.EnvVarNvidiaRequireCuda:      "cuda>=9.0",
+				image.EnvVarNvidiaVisibleDevices:   "all",
+				image.EnvVarNvidiaMigConfigDevices: "mig0,mig1",
 			},
 			privileged: true,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "all",
+				Devices:            []string{"all"},
 				MigConfigDevices:   "mig0,mig1",
 				DriverCapabilities: image.DefaultDriverCapabilities.String(),
 				Requirements:       []string{"cuda>=9.0"},
@@ -354,9 +356,9 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Modern image, devices 'all', migConfig set, unprivileged",
 			env: map[string]string{
-				envNVRequireCUDA:      "cuda>=9.0",
-				envNVVisibleDevices:   "all",
-				envNVMigConfigDevices: "mig0,mig1",
+				image.EnvVarNvidiaRequireCuda:      "cuda>=9.0",
+				image.EnvVarNvidiaVisibleDevices:   "all",
+				image.EnvVarNvidiaMigConfigDevices: "mig0,mig1",
 			},
 			privileged:    false,
 			expectedPanic: true,
@@ -364,13 +366,13 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Modern image, devices 'all', migMonitor set, privileged",
 			env: map[string]string{
-				envNVRequireCUDA:       "cuda>=9.0",
-				envNVVisibleDevices:    "all",
-				envNVMigMonitorDevices: "mig0,mig1",
+				image.EnvVarNvidiaRequireCuda:       "cuda>=9.0",
+				image.EnvVarNvidiaVisibleDevices:    "all",
+				image.EnvVarNvidiaMigMonitorDevices: "mig0,mig1",
 			},
 			privileged: true,
 			expectedConfig: &nvidiaConfig{
-				Devices:            "all",
+				Devices:            []string{"all"},
 				MigMonitorDevices:  "mig0,mig1",
 				DriverCapabilities: image.DefaultDriverCapabilities.String(),
 				Requirements:       []string{"cuda>=9.0"},
@@ -379,9 +381,9 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Modern image, devices 'all', migMonitor set, unprivileged",
 			env: map[string]string{
-				envNVRequireCUDA:       "cuda>=9.0",
-				envNVVisibleDevices:    "all",
-				envNVMigMonitorDevices: "mig0,mig1",
+				image.EnvVarNvidiaRequireCuda:       "cuda>=9.0",
+				image.EnvVarNvidiaVisibleDevices:    "all",
+				image.EnvVarNvidiaMigMonitorDevices: "mig0,mig1",
 			},
 			privileged:    false,
 			expectedPanic: true,
@@ -389,91 +391,104 @@ func TestGetNvidiaConfig(t *testing.T) {
 		{
 			description: "Hook config set as driver-capabilities-all",
 			env: map[string]string{
-				envNVVisibleDevices:     "all",
-				envNVDriverCapabilities: "all",
+				image.EnvVarNvidiaVisibleDevices:     "all",
+				image.EnvVarNvidiaDriverCapabilities: "all",
 			},
 			privileged: true,
-			hookConfig: &HookConfig{
-				SupportedDriverCapabilities: "video,display",
+			hookConfig: &hookConfig{
+				Config: &config.Config{
+					SupportedDriverCapabilities: "video,display",
+				},
 			},
 			expectedConfig: &nvidiaConfig{
-				Devices:            "all",
+				Devices:            []string{"all"},
 				DriverCapabilities: "display,video",
 			},
 		},
 		{
 			description: "Hook config set, envvar sets driver-capabilities",
 			env: map[string]string{
-				envNVVisibleDevices:     "all",
-				envNVDriverCapabilities: "video,display",
+				image.EnvVarNvidiaVisibleDevices:     "all",
+				image.EnvVarNvidiaDriverCapabilities: "video,display",
 			},
 			privileged: true,
-			hookConfig: &HookConfig{
-				SupportedDriverCapabilities: "video,display,compute,utility",
+			hookConfig: &hookConfig{
+				Config: &config.Config{
+					SupportedDriverCapabilities: "video,display,compute,utility",
+				},
 			},
 			expectedConfig: &nvidiaConfig{
-				Devices:            "all",
+				Devices:            []string{"all"},
 				DriverCapabilities: "display,video",
 			},
 		},
 		{
 			description: "Hook config set, envvar unset sets default driver-capabilities",
 			env: map[string]string{
-				envNVVisibleDevices: "all",
+				image.EnvVarNvidiaVisibleDevices: "all",
 			},
 			privileged: true,
-			hookConfig: &HookConfig{
-				SupportedDriverCapabilities: "video,display,utility,compute",
+			hookConfig: &hookConfig{
+				Config: &config.Config{
+					SupportedDriverCapabilities: "video,display,utility,compute",
+				},
 			},
 			expectedConfig: &nvidiaConfig{
-				Devices:            "all",
+				Devices:            []string{"all"},
 				DriverCapabilities: image.DefaultDriverCapabilities.String(),
 			},
 		},
 		{
 			description: "Hook config set, swarmResource overrides device selection",
 			env: map[string]string{
-				envNVVisibleDevices:     "all",
-				"DOCKER_SWARM_RESOURCE": "GPU1,GPU2",
+				image.EnvVarNvidiaVisibleDevices: "all",
+				"DOCKER_SWARM_RESOURCE":          "GPU1,GPU2",
 			},
 			privileged: true,
-			hookConfig: &HookConfig{
-				SwarmResource:               "DOCKER_SWARM_RESOURCE",
-				SupportedDriverCapabilities: "video,display,utility,compute",
+			hookConfig: &hookConfig{
+				Config: &config.Config{
+					SwarmResource:               "DOCKER_SWARM_RESOURCE",
+					SupportedDriverCapabilities: "video,display,utility,compute",
+				},
 			},
 			expectedConfig: &nvidiaConfig{
-				Devices:            "GPU1,GPU2",
+				Devices:            []string{"GPU1", "GPU2"},
 				DriverCapabilities: image.DefaultDriverCapabilities.String(),
 			},
 		},
 		{
 			description: "Hook config set, comma separated swarmResource is split and overrides device selection",
 			env: map[string]string{
-				envNVVisibleDevices:     "all",
-				"DOCKER_SWARM_RESOURCE": "GPU1,GPU2",
+				image.EnvVarNvidiaVisibleDevices: "all",
+				"DOCKER_SWARM_RESOURCE":          "GPU1,GPU2",
 			},
 			privileged: true,
-			hookConfig: &HookConfig{
-				SwarmResource:               "NOT_DOCKER_SWARM_RESOURCE,DOCKER_SWARM_RESOURCE",
-				SupportedDriverCapabilities: "video,display,utility,compute",
+			hookConfig: &hookConfig{
+				Config: &config.Config{
+					SwarmResource:               "NOT_DOCKER_SWARM_RESOURCE,DOCKER_SWARM_RESOURCE",
+					SupportedDriverCapabilities: "video,display,utility,compute",
+				},
 			},
 			expectedConfig: &nvidiaConfig{
-				Devices:            "GPU1,GPU2",
+				Devices:            []string{"GPU1", "GPU2"},
 				DriverCapabilities: image.DefaultDriverCapabilities.String(),
 			},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
+			image, _ := image.New(
+				image.WithEnvMap(tc.env),
+			)
 			// Wrap the call to getNvidiaConfig() in a closure.
-			var config *nvidiaConfig
+			var cfg *nvidiaConfig
 			getConfig := func() {
-				hookConfig := tc.hookConfig
-				if hookConfig == nil {
-					defaultConfig, _ := getDefaultHookConfig()
-					hookConfig = &defaultConfig
+				hookCfg := tc.hookConfig
+				if hookCfg == nil {
+					defaultConfig, _ := config.GetDefault()
+					hookCfg = &hookConfig{defaultConfig}
 				}
-				config = getNvidiaConfig(hookConfig, tc.env, nil, tc.privileged)
+				cfg = hookCfg.getNvidiaConfig(image, tc.privileged)
 			}
 
 			// For any tests that are expected to panic, make sure they do.
@@ -487,96 +502,18 @@ func TestGetNvidiaConfig(t *testing.T) {
 
 			// And start comparing the test results to the expected results.
 			if tc.expectedConfig == nil {
-				require.Nil(t, config, tc.description)
+				require.Nil(t, cfg, tc.description)
 				return
 			}
 
-			require.NotNil(t, config, tc.description)
+			require.NotNil(t, cfg, tc.description)
 
-			require.Equal(t, tc.expectedConfig.Devices, config.Devices)
-			require.Equal(t, tc.expectedConfig.MigConfigDevices, config.MigConfigDevices)
-			require.Equal(t, tc.expectedConfig.MigMonitorDevices, config.MigMonitorDevices)
-			require.Equal(t, tc.expectedConfig.DriverCapabilities, config.DriverCapabilities)
+			require.Equal(t, tc.expectedConfig.Devices, cfg.Devices)
+			require.Equal(t, tc.expectedConfig.MigConfigDevices, cfg.MigConfigDevices)
+			require.Equal(t, tc.expectedConfig.MigMonitorDevices, cfg.MigMonitorDevices)
+			require.Equal(t, tc.expectedConfig.DriverCapabilities, cfg.DriverCapabilities)
 
-			require.ElementsMatch(t, tc.expectedConfig.Requirements, config.Requirements)
-		})
-	}
-}
-
-func TestGetDevicesFromMounts(t *testing.T) {
-	var tests = []struct {
-		description     string
-		mounts          []Mount
-		expectedDevices *string
-	}{
-		{
-			description:     "No mounts",
-			mounts:          nil,
-			expectedDevices: nil,
-		},
-		{
-			description: "Host path is not /dev/null",
-			mounts: []Mount{
-				{
-					Source:      "/not/dev/null",
-					Destination: filepath.Join(deviceListAsVolumeMountsRoot, "GPU0"),
-				},
-			},
-			expectedDevices: nil,
-		},
-		{
-			description: "Container path is not prefixed by 'root'",
-			mounts: []Mount{
-				{
-					Source:      "/dev/null",
-					Destination: filepath.Join("/other/prefix", "GPU0"),
-				},
-			},
-			expectedDevices: nil,
-		},
-		{
-			description: "Container path is only 'root'",
-			mounts: []Mount{
-				{
-					Source:      "/dev/null",
-					Destination: deviceListAsVolumeMountsRoot,
-				},
-			},
-			expectedDevices: nil,
-		},
-		{
-			description: "Discover 2 devices",
-			mounts: []Mount{
-				{
-					Source:      "/dev/null",
-					Destination: filepath.Join(deviceListAsVolumeMountsRoot, "GPU0"),
-				},
-				{
-					Source:      "/dev/null",
-					Destination: filepath.Join(deviceListAsVolumeMountsRoot, "GPU1"),
-				},
-			},
-			expectedDevices: &[]string{"GPU0,GPU1"}[0],
-		},
-		{
-			description: "Discover 2 devices with slashes in the name",
-			mounts: []Mount{
-				{
-					Source:      "/dev/null",
-					Destination: filepath.Join(deviceListAsVolumeMountsRoot, "GPU0-MIG0/0/1"),
-				},
-				{
-					Source:      "/dev/null",
-					Destination: filepath.Join(deviceListAsVolumeMountsRoot, "GPU1-MIG0/0/1"),
-				},
-			},
-			expectedDevices: &[]string{"GPU0-MIG0/0/1,GPU1-MIG0/0/1"}[0],
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.description, func(t *testing.T) {
-			devices := getDevicesFromMounts(tc.mounts)
-			require.Equal(t, tc.expectedDevices, devices)
+			require.ElementsMatch(t, tc.expectedConfig.Requirements, cfg.Requirements)
 		})
 	}
 }
@@ -584,30 +521,30 @@ func TestGetDevicesFromMounts(t *testing.T) {
 func TestDeviceListSourcePriority(t *testing.T) {
 	var tests = []struct {
 		description        string
-		mountDevices       []Mount
+		mountDevices       []specs.Mount
 		envvarDevices      string
 		privileged         bool
 		acceptUnprivileged bool
 		acceptMounts       bool
-		expectedDevices    *string
+		expectedDevices    []string
 	}{
 		{
 			description: "Mount devices, unprivileged, no accept unprivileged",
-			mountDevices: []Mount{
+			mountDevices: []specs.Mount{
 				{
 					Source:      "/dev/null",
-					Destination: filepath.Join(deviceListAsVolumeMountsRoot, "GPU0"),
+					Destination: filepath.Join(image.DeviceListAsVolumeMountsRoot, "GPU0"),
 				},
 				{
 					Source:      "/dev/null",
-					Destination: filepath.Join(deviceListAsVolumeMountsRoot, "GPU1"),
+					Destination: filepath.Join(image.DeviceListAsVolumeMountsRoot, "GPU1"),
 				},
 			},
 			envvarDevices:      "GPU2,GPU3",
 			privileged:         false,
 			acceptUnprivileged: false,
 			acceptMounts:       true,
-			expectedDevices:    &[]string{"GPU0,GPU1"}[0],
+			expectedDevices:    []string{"GPU0", "GPU1"},
 		},
 		{
 			description:        "No mount devices, unprivileged, no accept unprivileged",
@@ -625,7 +562,7 @@ func TestDeviceListSourcePriority(t *testing.T) {
 			privileged:         true,
 			acceptUnprivileged: false,
 			acceptMounts:       true,
-			expectedDevices:    &[]string{"GPU0,GPU1"}[0],
+			expectedDevices:    []string{"GPU0", "GPU1"},
 		},
 		{
 			description:        "No mount devices, unprivileged, accept unprivileged",
@@ -634,36 +571,36 @@ func TestDeviceListSourcePriority(t *testing.T) {
 			privileged:         false,
 			acceptUnprivileged: true,
 			acceptMounts:       true,
-			expectedDevices:    &[]string{"GPU0,GPU1"}[0],
+			expectedDevices:    []string{"GPU0", "GPU1"},
 		},
 		{
 			description: "Mount devices, unprivileged, accept unprivileged, no accept mounts",
-			mountDevices: []Mount{
+			mountDevices: []specs.Mount{
 				{
 					Source:      "/dev/null",
-					Destination: filepath.Join(deviceListAsVolumeMountsRoot, "GPU0"),
+					Destination: filepath.Join(image.DeviceListAsVolumeMountsRoot, "GPU0"),
 				},
 				{
 					Source:      "/dev/null",
-					Destination: filepath.Join(deviceListAsVolumeMountsRoot, "GPU1"),
+					Destination: filepath.Join(image.DeviceListAsVolumeMountsRoot, "GPU1"),
 				},
 			},
 			envvarDevices:      "GPU2,GPU3",
 			privileged:         false,
 			acceptUnprivileged: true,
 			acceptMounts:       false,
-			expectedDevices:    &[]string{"GPU2,GPU3"}[0],
+			expectedDevices:    []string{"GPU2", "GPU3"},
 		},
 		{
 			description: "Mount devices, unprivileged, no accept unprivileged, no accept mounts",
-			mountDevices: []Mount{
+			mountDevices: []specs.Mount{
 				{
 					Source:      "/dev/null",
-					Destination: filepath.Join(deviceListAsVolumeMountsRoot, "GPU0"),
+					Destination: filepath.Join(image.DeviceListAsVolumeMountsRoot, "GPU0"),
 				},
 				{
 					Source:      "/dev/null",
-					Destination: filepath.Join(deviceListAsVolumeMountsRoot, "GPU1"),
+					Destination: filepath.Join(image.DeviceListAsVolumeMountsRoot, "GPU1"),
 				},
 			},
 			envvarDevices:      "GPU2,GPU3",
@@ -676,15 +613,21 @@ func TestDeviceListSourcePriority(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
 			// Wrap the call to getDevices() in a closure.
-			var devices *string
+			var devices []string
 			getDevices := func() {
-				env := map[string]string{
-					envNVVisibleDevices: tc.envvarDevices,
-				}
-				hookConfig, _ := getDefaultHookConfig()
-				hookConfig.AcceptEnvvarUnprivileged = tc.acceptUnprivileged
-				hookConfig.AcceptDeviceListAsVolumeMounts = tc.acceptMounts
-				devices = getDevices(&hookConfig, env, tc.mountDevices, tc.privileged)
+				image, _ := image.New(
+					image.WithEnvMap(
+						map[string]string{
+							image.EnvVarNvidiaVisibleDevices: tc.envvarDevices,
+						},
+					),
+					image.WithMounts(tc.mountDevices),
+				)
+				defaultConfig, _ := config.GetDefault()
+				cfg := &hookConfig{defaultConfig}
+				cfg.AcceptEnvvarUnprivileged = tc.acceptUnprivileged
+				cfg.AcceptDeviceListAsVolumeMounts = tc.acceptMounts
+				devices = cfg.getDevices(image, tc.privileged)
 			}
 
 			// For all other tests, just grab the devices and check the results
@@ -696,8 +639,6 @@ func TestDeviceListSourcePriority(t *testing.T) {
 }
 
 func TestGetDevicesFromEnvvar(t *testing.T) {
-	all := "all"
-	empty := ""
 	envDockerResourceGPUs := "DOCKER_RESOURCE_GPUS"
 	gpuID := "GPU-12345"
 	anotherGPUID := "GPU-67890"
@@ -707,7 +648,7 @@ func TestGetDevicesFromEnvvar(t *testing.T) {
 		description          string
 		swarmResourceEnvvars []string
 		env                  map[string]string
-		expectedDevices      *string
+		expectedDevices      []string
 	}{
 		{
 			description: "empty env returns nil for non-legacy image",
@@ -715,43 +656,43 @@ func TestGetDevicesFromEnvvar(t *testing.T) {
 		{
 			description: "blank NVIDIA_VISIBLE_DEVICES returns nil for non-legacy image",
 			env: map[string]string{
-				envNVVisibleDevices: "",
+				image.EnvVarNvidiaVisibleDevices: "",
 			},
 		},
 		{
 			description: "'void' NVIDIA_VISIBLE_DEVICES returns nil for non-legacy image",
 			env: map[string]string{
-				envNVVisibleDevices: "void",
+				image.EnvVarNvidiaVisibleDevices: "void",
 			},
 		},
 		{
 			description: "'none' NVIDIA_VISIBLE_DEVICES returns empty for non-legacy image",
 			env: map[string]string{
-				envNVVisibleDevices: "none",
+				image.EnvVarNvidiaVisibleDevices: "none",
 			},
-			expectedDevices: &empty,
+			expectedDevices: []string{""},
 		},
 		{
 			description: "NVIDIA_VISIBLE_DEVICES set returns value for non-legacy image",
 			env: map[string]string{
-				envNVVisibleDevices: gpuID,
+				image.EnvVarNvidiaVisibleDevices: gpuID,
 			},
-			expectedDevices: &gpuID,
+			expectedDevices: []string{gpuID},
 		},
 		{
 			description: "NVIDIA_VISIBLE_DEVICES set returns value for legacy image",
 			env: map[string]string{
-				envNVVisibleDevices: gpuID,
-				envCUDAVersion:      "legacy",
+				image.EnvVarNvidiaVisibleDevices: gpuID,
+				image.EnvVarCudaVersion:          "legacy",
 			},
-			expectedDevices: &gpuID,
+			expectedDevices: []string{gpuID},
 		},
 		{
 			description: "empty env returns all for legacy image",
 			env: map[string]string{
-				envCUDAVersion: "legacy",
+				image.EnvVarCudaVersion: "legacy",
 			},
-			expectedDevices: &all,
+			expectedDevices: []string{"all"},
 		},
 		// Add the `DOCKER_RESOURCE_GPUS` envvar and ensure that this is ignored when
 		// not enabled
@@ -764,49 +705,49 @@ func TestGetDevicesFromEnvvar(t *testing.T) {
 		{
 			description: "blank NVIDIA_VISIBLE_DEVICES returns nil for non-legacy image",
 			env: map[string]string{
-				envNVVisibleDevices:   "",
-				envDockerResourceGPUs: anotherGPUID,
+				image.EnvVarNvidiaVisibleDevices: "",
+				envDockerResourceGPUs:            anotherGPUID,
 			},
 		},
 		{
 			description: "'void' NVIDIA_VISIBLE_DEVICES returns nil for non-legacy image",
 			env: map[string]string{
-				envNVVisibleDevices:   "void",
-				envDockerResourceGPUs: anotherGPUID,
+				image.EnvVarNvidiaVisibleDevices: "void",
+				envDockerResourceGPUs:            anotherGPUID,
 			},
 		},
 		{
 			description: "'none' NVIDIA_VISIBLE_DEVICES returns empty for non-legacy image",
 			env: map[string]string{
-				envNVVisibleDevices:   "none",
-				envDockerResourceGPUs: anotherGPUID,
+				image.EnvVarNvidiaVisibleDevices: "none",
+				envDockerResourceGPUs:            anotherGPUID,
 			},
-			expectedDevices: &empty,
+			expectedDevices: []string{""},
 		},
 		{
 			description: "NVIDIA_VISIBLE_DEVICES set returns value for non-legacy image",
 			env: map[string]string{
-				envNVVisibleDevices:   gpuID,
-				envDockerResourceGPUs: anotherGPUID,
+				image.EnvVarNvidiaVisibleDevices: gpuID,
+				envDockerResourceGPUs:            anotherGPUID,
 			},
-			expectedDevices: &gpuID,
+			expectedDevices: []string{gpuID},
 		},
 		{
 			description: "NVIDIA_VISIBLE_DEVICES set returns value for legacy image",
 			env: map[string]string{
-				envNVVisibleDevices:   gpuID,
-				envDockerResourceGPUs: anotherGPUID,
-				envCUDAVersion:        "legacy",
+				image.EnvVarNvidiaVisibleDevices: gpuID,
+				envDockerResourceGPUs:            anotherGPUID,
+				image.EnvVarCudaVersion:          "legacy",
 			},
-			expectedDevices: &gpuID,
+			expectedDevices: []string{gpuID},
 		},
 		{
 			description: "empty env returns all for legacy image",
 			env: map[string]string{
-				envDockerResourceGPUs: anotherGPUID,
-				envCUDAVersion:        "legacy",
+				envDockerResourceGPUs:   anotherGPUID,
+				image.EnvVarCudaVersion: "legacy",
 			},
-			expectedDevices: &all,
+			expectedDevices: []string{"all"},
 		},
 		// Add the `DOCKER_RESOURCE_GPUS` envvar and ensure that this is selected when
 		// enabled
@@ -834,7 +775,7 @@ func TestGetDevicesFromEnvvar(t *testing.T) {
 			env: map[string]string{
 				envDockerResourceGPUs: "none",
 			},
-			expectedDevices: &empty,
+			expectedDevices: []string{""},
 		},
 		{
 			description:          "DOCKER_RESOURCE_GPUS set returns value for non-legacy image",
@@ -842,16 +783,16 @@ func TestGetDevicesFromEnvvar(t *testing.T) {
 			env: map[string]string{
 				envDockerResourceGPUs: gpuID,
 			},
-			expectedDevices: &gpuID,
+			expectedDevices: []string{gpuID},
 		},
 		{
 			description:          "DOCKER_RESOURCE_GPUS set returns value for legacy image",
 			swarmResourceEnvvars: []string{envDockerResourceGPUs},
 			env: map[string]string{
-				envDockerResourceGPUs: gpuID,
-				envCUDAVersion:        "legacy",
+				envDockerResourceGPUs:   gpuID,
+				image.EnvVarCudaVersion: "legacy",
 			},
-			expectedDevices: &gpuID,
+			expectedDevices: []string{gpuID},
 		},
 		{
 			description:          "DOCKER_RESOURCE_GPUS is selected if present",
@@ -859,60 +800,54 @@ func TestGetDevicesFromEnvvar(t *testing.T) {
 			env: map[string]string{
 				envDockerResourceGPUs: anotherGPUID,
 			},
-			expectedDevices: &anotherGPUID,
+			expectedDevices: []string{anotherGPUID},
 		},
 		{
 			description:          "DOCKER_RESOURCE_GPUS overrides NVIDIA_VISIBLE_DEVICES if present",
 			swarmResourceEnvvars: []string{envDockerResourceGPUs},
 			env: map[string]string{
-				envNVVisibleDevices:   gpuID,
-				envDockerResourceGPUs: anotherGPUID,
+				image.EnvVarNvidiaVisibleDevices: gpuID,
+				envDockerResourceGPUs:            anotherGPUID,
 			},
-			expectedDevices: &anotherGPUID,
+			expectedDevices: []string{anotherGPUID},
 		},
 		{
 			description:          "DOCKER_RESOURCE_GPUS_ADDITIONAL overrides NVIDIA_VISIBLE_DEVICES if present",
 			swarmResourceEnvvars: []string{"DOCKER_RESOURCE_GPUS_ADDITIONAL"},
 			env: map[string]string{
-				envNVVisibleDevices:               gpuID,
+				image.EnvVarNvidiaVisibleDevices:  gpuID,
 				"DOCKER_RESOURCE_GPUS_ADDITIONAL": anotherGPUID,
 			},
-			expectedDevices: &anotherGPUID,
+			expectedDevices: []string{anotherGPUID},
 		},
 		{
 			description:          "All available swarm resource envvars are selected and override NVIDIA_VISIBLE_DEVICES if present",
 			swarmResourceEnvvars: []string{"DOCKER_RESOURCE_GPUS", "DOCKER_RESOURCE_GPUS_ADDITIONAL"},
 			env: map[string]string{
-				envNVVisibleDevices:               gpuID,
+				image.EnvVarNvidiaVisibleDevices:  gpuID,
 				"DOCKER_RESOURCE_GPUS":            thirdGPUID,
 				"DOCKER_RESOURCE_GPUS_ADDITIONAL": anotherGPUID,
 			},
-			expectedDevices: func() *string {
-				result := fmt.Sprintf("%s,%s", thirdGPUID, anotherGPUID)
-				return &result
-			}(),
+			expectedDevices: []string{thirdGPUID, anotherGPUID},
 		},
 		{
 			description:          "DOCKER_RESOURCE_GPUS_ADDITIONAL or DOCKER_RESOURCE_GPUS override NVIDIA_VISIBLE_DEVICES if present",
 			swarmResourceEnvvars: []string{"DOCKER_RESOURCE_GPUS", "DOCKER_RESOURCE_GPUS_ADDITIONAL"},
 			env: map[string]string{
-				envNVVisibleDevices:               gpuID,
+				image.EnvVarNvidiaVisibleDevices:  gpuID,
 				"DOCKER_RESOURCE_GPUS_ADDITIONAL": anotherGPUID,
 			},
-			expectedDevices: &anotherGPUID,
+			expectedDevices: []string{anotherGPUID},
 		},
 	}
 
-	for i, tc := range tests {
+	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			devices := getDevicesFromEnvvar(image.CUDA(tc.env), tc.swarmResourceEnvvars)
-			if tc.expectedDevices == nil {
-				require.Nil(t, devices, "%d: %v", i, tc)
-				return
-			}
-
-			require.NotNil(t, devices, "%d: %v", i, tc)
-			require.Equal(t, *tc.expectedDevices, *devices, "%d: %v", i, tc)
+			image, _ := image.New(
+				image.WithEnvMap(tc.env),
+			)
+			devices := getDevicesFromEnvvar(image, tc.swarmResourceEnvvars)
+			require.EqualValues(t, tc.expectedDevices, devices)
 		})
 	}
 }
@@ -932,7 +867,7 @@ func TestGetDriverCapabilities(t *testing.T) {
 		{
 			description: "Env is set for legacy image",
 			env: map[string]string{
-				envNVDriverCapabilities: "display,video",
+				image.EnvVarNvidiaDriverCapabilities: "display,video",
 			},
 			legacyImage:           true,
 			supportedCapabilities: supportedCapabilities,
@@ -941,7 +876,7 @@ func TestGetDriverCapabilities(t *testing.T) {
 		{
 			description: "Env is all for legacy image",
 			env: map[string]string{
-				envNVDriverCapabilities: "all",
+				image.EnvVarNvidiaDriverCapabilities: "all",
 			},
 			legacyImage:           true,
 			supportedCapabilities: supportedCapabilities,
@@ -950,7 +885,7 @@ func TestGetDriverCapabilities(t *testing.T) {
 		{
 			description: "Env is empty for legacy image",
 			env: map[string]string{
-				envNVDriverCapabilities: "",
+				image.EnvVarNvidiaDriverCapabilities: "",
 			},
 			legacyImage:           true,
 			supportedCapabilities: supportedCapabilities,
@@ -966,7 +901,7 @@ func TestGetDriverCapabilities(t *testing.T) {
 		{
 			description: "Env is set for modern image",
 			env: map[string]string{
-				envNVDriverCapabilities: "display,video",
+				image.EnvVarNvidiaDriverCapabilities: "display,video",
 			},
 			legacyImage:           false,
 			supportedCapabilities: supportedCapabilities,
@@ -982,7 +917,7 @@ func TestGetDriverCapabilities(t *testing.T) {
 		{
 			description: "Env is all for modern image",
 			env: map[string]string{
-				envNVDriverCapabilities: "all",
+				image.EnvVarNvidiaDriverCapabilities: "all",
 			},
 			legacyImage:           false,
 			supportedCapabilities: supportedCapabilities,
@@ -991,7 +926,7 @@ func TestGetDriverCapabilities(t *testing.T) {
 		{
 			description: "Env is empty for modern image",
 			env: map[string]string{
-				envNVDriverCapabilities: "",
+				image.EnvVarNvidiaDriverCapabilities: "",
 			},
 			legacyImage:           false,
 			supportedCapabilities: supportedCapabilities,
@@ -1000,7 +935,7 @@ func TestGetDriverCapabilities(t *testing.T) {
 		{
 			description: "Invalid capabilities panic",
 			env: map[string]string{
-				envNVDriverCapabilities: "compute,utility",
+				image.EnvVarNvidiaDriverCapabilities: "compute,utility",
 			},
 			supportedCapabilities: "not-compute,not-utility",
 			expectedPanic:         true,
@@ -1015,14 +950,19 @@ func TestGetDriverCapabilities(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			var capabilites string
+			var capabilities string
 
-			c := HookConfig{
-				SupportedDriverCapabilities: tc.supportedCapabilities,
+			c := hookConfig{
+				Config: &config.Config{
+					SupportedDriverCapabilities: tc.supportedCapabilities,
+				},
 			}
 
+			image, _ := image.New(
+				image.WithEnvMap(tc.env),
+			)
 			getDriverCapabilities := func() {
-				capabilites = c.getDriverCapabilities(tc.env, tc.legacyImage).String()
+				capabilities = c.getDriverCapabilities(image, tc.legacyImage).String()
 			}
 
 			if tc.expectedPanic {
@@ -1031,7 +971,7 @@ func TestGetDriverCapabilities(t *testing.T) {
 			}
 
 			getDriverCapabilities()
-			require.EqualValues(t, tc.expectedCapabilities, capabilites)
+			require.EqualValues(t, tc.expectedCapabilities, capabilities)
 		})
 	}
 }

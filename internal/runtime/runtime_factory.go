@@ -23,19 +23,21 @@ import (
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/config/image"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/info"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/lookup/root"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/modifier"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/oci"
 )
 
 // newNVIDIAContainerRuntime is a factory method that constructs a runtime based on the selected configuration and specified logger
-func newNVIDIAContainerRuntime(logger logger.Interface, cfg *config.Config, argv []string) (oci.Runtime, error) {
+func newNVIDIAContainerRuntime(logger logger.Interface, cfg *config.Config, argv []string, driver *root.Driver) (oci.Runtime, error) {
 	lowLevelRuntime, err := oci.NewLowLevelRuntime(logger, cfg.NVIDIAContainerRuntimeConfig.Runtimes)
 	if err != nil {
 		return nil, fmt.Errorf("error constructing low-level runtime: %v", err)
 	}
 
+	logger.Tracef("Using low-level runtime %v", lowLevelRuntime.String())
 	if !oci.HasCreateSubcommand(argv) {
-		logger.Debugf("Skipping modifier for non-create subcommand")
+		logger.Tracef("Skipping modifier for non-create subcommand")
 		return lowLevelRuntime, nil
 	}
 
@@ -44,12 +46,12 @@ func newNVIDIAContainerRuntime(logger logger.Interface, cfg *config.Config, argv
 		return nil, fmt.Errorf("error constructing OCI specification: %v", err)
 	}
 
-	specModifier, err := newSpecModifier(logger, cfg, ociSpec)
+	specModifier, err := newSpecModifier(logger, cfg, ociSpec, driver)
 	if err != nil {
 		return nil, fmt.Errorf("failed to construct OCI spec modifier: %v", err)
 	}
 
-	// Create the wrapping runtime with the specified modifier
+	// Create the wrapping runtime with the specified modifier.
 	r := oci.NewModifyingRuntimeWrapper(
 		logger,
 		lowLevelRuntime,
@@ -61,7 +63,7 @@ func newNVIDIAContainerRuntime(logger logger.Interface, cfg *config.Config, argv
 }
 
 // newSpecModifier is a factory method that creates constructs an OCI spec modifer based on the provided config.
-func newSpecModifier(logger logger.Interface, cfg *config.Config, ociSpec oci.Spec) (oci.SpecModifier, error) {
+func newSpecModifier(logger logger.Interface, cfg *config.Config, ociSpec oci.Spec, driver *root.Driver) (oci.SpecModifier, error) {
 	rawSpec, err := ociSpec.Load()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load OCI spec: %v", err)
@@ -82,17 +84,12 @@ func newSpecModifier(logger logger.Interface, cfg *config.Config, ociSpec oci.Sp
 		return modeModifier, nil
 	}
 
-	graphicsModifier, err := modifier.NewGraphicsModifier(logger, cfg, image)
+	graphicsModifier, err := modifier.NewGraphicsModifier(logger, cfg, image, driver)
 	if err != nil {
 		return nil, err
 	}
 
-	gdsModifier, err := modifier.NewGDSModifier(logger, cfg, image)
-	if err != nil {
-		return nil, err
-	}
-
-	mofedModifier, err := modifier.NewMOFEDModifier(logger, cfg, image)
+	featureModifier, err := modifier.NewFeatureGatedModifier(logger, cfg, image)
 	if err != nil {
 		return nil, err
 	}
@@ -100,8 +97,7 @@ func newSpecModifier(logger logger.Interface, cfg *config.Config, ociSpec oci.Sp
 	modifiers := modifier.Merge(
 		modeModifier,
 		graphicsModifier,
-		gdsModifier,
-		mofedModifier,
+		featureModifier,
 	)
 	return modifiers, nil
 }

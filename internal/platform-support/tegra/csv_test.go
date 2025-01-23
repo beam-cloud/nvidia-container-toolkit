@@ -20,11 +20,12 @@ import (
 	"fmt"
 	"testing"
 
+	testlog "github.com/sirupsen/logrus/hooks/test"
+	"github.com/stretchr/testify/require"
+
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/discover"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/lookup"
-	testlog "github.com/sirupsen/logrus/hooks/test"
-	"github.com/stretchr/testify/require"
 
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/platform-support/tegra/csv"
 )
@@ -89,10 +90,9 @@ func TestDiscovererFromCSVFiles(t *testing.T) {
 			expectedHooks: []discover.Hook{
 				{
 					Lifecycle: "createContainer",
-					Path:      "/usr/bin/nvidia-ctk",
+					Path:      "/usr/bin/nvidia-cdi-hook",
 					Args: []string{
-						"nvidia-ctk",
-						"hook",
+						"nvidia-cdi-hook",
 						"create-symlinks",
 						"--link",
 						"/usr/lib/aarch64-linux-gnu/tegra/libv4l2_nvargus.so::/usr/lib/aarch64-linux-gnu/libv4l/plugins/nv/libv4l2_nvargus.so",
@@ -146,10 +146,9 @@ func TestDiscovererFromCSVFiles(t *testing.T) {
 			expectedHooks: []discover.Hook{
 				{
 					Lifecycle: "createContainer",
-					Path:      "/usr/bin/nvidia-ctk",
+					Path:      "/usr/bin/nvidia-cdi-hook",
 					Args: []string{
-						"nvidia-ctk",
-						"hook",
+						"nvidia-cdi-hook",
 						"create-symlinks",
 						"--link",
 						"/usr/lib/aarch64-linux-gnu/tegra/libv4l2_nvargus.so::/usr/lib/aarch64-linux-gnu/libv4l/plugins/nv/libv4l2_nvargus.so",
@@ -188,7 +187,7 @@ func TestDiscovererFromCSVFiles(t *testing.T) {
 
 			o := tegraOptions{
 				logger:              logger,
-				nvidiaCTKPath:       "/usr/bin/nvidia-ctk",
+				nvidiaCDIHookPath:   "/usr/bin/nvidia-cdi-hook",
 				csvFiles:            []string{"dummy"},
 				ignorePatterns:      tc.ignorePatterns,
 				symlinkLocator:      tc.symlinkLocator,

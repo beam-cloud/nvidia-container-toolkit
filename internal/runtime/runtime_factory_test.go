@@ -24,11 +24,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/config"
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/test"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	testlog "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/config"
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/lookup/root"
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/test"
 )
 
 const (
@@ -62,6 +64,9 @@ func TestMain(m *testing.M) {
 
 func TestFactoryMethod(t *testing.T) {
 	logger, _ := testlog.NewNullLogger()
+	driver := root.New(
+		root.WithDriverRoot("/nvidia/driver/root"),
+	)
 
 	testCases := []struct {
 		description   string
@@ -142,6 +147,7 @@ func TestFactoryMethod(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
+
 			bundleDir := t.TempDir()
 
 			specFile, err := os.Create(filepath.Join(bundleDir, "config.json"))
@@ -150,7 +156,7 @@ func TestFactoryMethod(t *testing.T) {
 
 			argv := []string{"--bundle", bundleDir, "create"}
 
-			_, err = newNVIDIAContainerRuntime(logger, tc.cfg, argv)
+			_, err = newNVIDIAContainerRuntime(logger, tc.cfg, argv, driver)
 			if tc.expectedError {
 				require.Error(t, err)
 			} else {

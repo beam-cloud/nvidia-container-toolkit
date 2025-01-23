@@ -76,7 +76,7 @@ func doPrestart(ociConfigPath *string) {
 	}
 	cli := hook.NVIDIAContainerCLIConfig
 
-	container := getContainerConfig(*hook, *ociConfigPath)
+	container := hook.getContainerConfig(*ociConfigPath)
 	nvidia := container.Nvidia
 	if nvidia == nil {
 		// Not a GPU container, nothing to do.
@@ -96,6 +96,9 @@ func doPrestart(ociConfigPath *string) {
 	if cli.LoadKmods {
 		args = append(args, "--load-kmods")
 	}
+	if hook.Features.DisableImexChannelCreation.IsEnabled() {
+		args = append(args, "--no-create-imex-channels")
+	}
 	if cli.NoPivot {
 		args = append(args, "--no-pivot")
 	}
@@ -112,20 +115,23 @@ func doPrestart(ociConfigPath *string) {
 	}
 	args = append(args, "configure")
 
-	if cli.Ldconfig != "" {
-		args = append(args, fmt.Sprintf("--ldconfig=%s", cli.Ldconfig))
+	if ldconfigPath := cli.NormalizeLDConfigPath(); ldconfigPath != "" {
+		args = append(args, fmt.Sprintf("--ldconfig=%s", ldconfigPath))
 	}
 	if cli.NoCgroups {
 		args = append(args, "--no-cgroups")
 	}
-	if len(nvidia.Devices) > 0 {
-		args = append(args, fmt.Sprintf("--device=%s", nvidia.Devices))
+	if devicesString := strings.Join(nvidia.Devices, ","); len(devicesString) > 0 {
+		args = append(args, fmt.Sprintf("--device=%s", devicesString))
 	}
 	if len(nvidia.MigConfigDevices) > 0 {
 		args = append(args, fmt.Sprintf("--mig-config=%s", nvidia.MigConfigDevices))
 	}
 	if len(nvidia.MigMonitorDevices) > 0 {
 		args = append(args, fmt.Sprintf("--mig-monitor=%s", nvidia.MigMonitorDevices))
+	}
+	if imexString := strings.Join(nvidia.ImexChannels, ","); len(imexString) > 0 {
+		args = append(args, fmt.Sprintf("--imex-channel=%s", imexString))
 	}
 
 	for _, cap := range strings.Split(nvidia.DriverCapabilities, ",") {
@@ -143,6 +149,7 @@ func doPrestart(ociConfigPath *string) {
 	args = append(args, rootfs)
 
 	env := append(os.Environ(), cli.Environment...)
+	//nolint:gosec // TODO: Can we harden this so that there is less risk of command injection?
 	err = syscall.Exec(args[0], args, env)
 	log.Panicln("exec failed:", err)
 }

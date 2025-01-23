@@ -5,8 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/test"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/test"
 )
 
 func TestMaintainSpec(t *testing.T) {
@@ -22,7 +23,8 @@ func TestMaintainSpec(t *testing.T) {
 
 		spec := NewFileSpec(inputSpecPath).(*fileSpec)
 
-		spec.Load()
+		_, err := spec.Load()
+		require.NoError(t, err)
 
 		outputSpecPath := filepath.Join(moduleRoot, "test/output", f)
 		spec.path = outputSpecPath

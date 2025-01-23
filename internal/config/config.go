@@ -18,22 +18,25 @@ package config
 
 import (
 	"bufio"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"tags.cncf.io/container-device-interface/pkg/cdi"
+
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/config/image"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/lookup"
-	"github.com/container-orchestrated-devices/container-device-interface/pkg/cdi"
 )
 
 const (
 	configOverride = "XDG_CONFIG_HOME"
 	configFilePath = "nvidia-container-runtime/config.toml"
 
-	nvidiaCTKExecutable      = "nvidia-ctk"
-	nvidiaCTKDefaultFilePath = "/usr/bin/nvidia-ctk"
+	nvidiaCTKExecutable          = "nvidia-ctk"
+	nvidiaCTKDefaultFilePath     = "/usr/bin/nvidia-ctk"
+	nvidiaCDIHookDefaultFilePath = "/usr/bin/nvidia-cdi-hook"
 
 	nvidiaContainerRuntimeHookExecutable  = "nvidia-container-runtime-hook"
 	nvidiaContainerRuntimeHookDefaultPath = "/usr/bin/nvidia-container-runtime-hook"
@@ -49,6 +52,8 @@ var (
 	NVIDIAContainerToolkitExecutable = "nvidia-container-toolkit"
 )
 
+var errInvalidConfig = errors.New("invalid config value")
+
 // Config represents the contents of the config.toml file for the NVIDIA Container Toolkit
 // Note: This is currently duplicated by the HookConfig in cmd/nvidia-container-toolkit/hook_config.go
 type Config struct {
@@ -62,6 +67,9 @@ type Config struct {
 	NVIDIACTKConfig                  CTKConfig          `toml:"nvidia-ctk"`
 	NVIDIAContainerRuntimeConfig     RuntimeConfig      `toml:"nvidia-container-runtime"`
 	NVIDIAContainerRuntimeHookConfig RuntimeHookConfig  `toml:"nvidia-container-runtime-hook"`
+
+	// Features allows for finer control over optional features.
+	Features features `toml:"features,omitempty"`
 }
 
 // GetConfigFilePath returns the path to the config file for the configured system
@@ -94,6 +102,7 @@ func GetDefault() (*Config, error) {
 		NVIDIAContainerCLIConfig: ContainerCLIConfig{
 			LoadKmods: true,
 			Ldconfig:  getLdConfigPath(),
+			User:      getUserGroup(),
 		},
 		NVIDIACTKConfig: CTKConfig{
 			Path: nvidiaCTKExecutable,
@@ -101,7 +110,7 @@ func GetDefault() (*Config, error) {
 		NVIDIAContainerRuntimeConfig: RuntimeConfig{
 			DebugFilePath: "/dev/null",
 			LogLevel:      "info",
-			Runtimes:      []string{"docker-runc", "runc"},
+			Runtimes:      []string{"docker-runc", "runc", "crun"},
 			Mode:          "auto",
 			Modes: modesConfig{
 				CSV: csvModeConfig{
@@ -121,31 +130,48 @@ func GetDefault() (*Config, error) {
 	return &d, nil
 }
 
-func getLdConfigPath() string {
-	if _, err := os.Stat("/sbin/ldconfig.real"); err == nil {
-		return "@/sbin/ldconfig.real"
+// assertValid checks for a valid config.
+func (c *Config) assertValid() error {
+	err := c.NVIDIAContainerCLIConfig.Ldconfig.assertValid(c.Features.AllowLDConfigFromContainer.IsEnabled())
+	if err != nil {
+		return errors.Join(err, errInvalidConfig)
 	}
-	return "@/sbin/ldconfig"
+	return nil
 }
 
-// getCommentedUserGroup returns whether the nvidia-container-cli user and group config option should be commented.
-func getCommentedUserGroup() bool {
-	uncommentIf := map[string]bool{
+// getLdConfigPath allows us to override this function for testing.
+var getLdConfigPath = getLdConfigPathStub
+
+func getLdConfigPathStub() ldconfigPath {
+	return ldconfigPath("@/sbin/ldconfig").normalize()
+}
+
+func getUserGroup() string {
+	if isSuse() {
+		return "root:video"
+	}
+	return ""
+}
+
+// isSuse returns whether a SUSE-based distribution was detected.
+func isSuse() bool {
+	suseDists := map[string]bool{
 		"suse":     true,
 		"opensuse": true,
 	}
 
 	idsLike := getDistIDLike()
 	for _, id := range idsLike {
-		if uncommentIf[id] {
-			return false
+		if suseDists[id] {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // getDistIDLike returns the ID_LIKE field from /etc/os-release.
-func getDistIDLike() []string {
+// We can override this for testing.
+var getDistIDLike = func() []string {
 	releaseFile, err := os.Open("/etc/os-release")
 	if err != nil {
 		return nil
@@ -167,12 +193,35 @@ func getDistIDLike() []string {
 // This executable is used in hooks and needs to be an absolute path.
 // If the path is specified as an absolute path, it is used directly
 // without checking for existence of an executable at that path.
+//
+// Deprecated: Use ResolveNVIDIACDIHookPath directly instead.
 func ResolveNVIDIACTKPath(logger logger.Interface, nvidiaCTKPath string) string {
 	return resolveWithDefault(
 		logger,
 		"NVIDIA Container Toolkit CLI",
 		nvidiaCTKPath,
 		nvidiaCTKDefaultFilePath,
+	)
+}
+
+// ResolveNVIDIACDIHookPath resolves the path to the nvidia-cdi-hook binary.
+// This executable is used in hooks and needs to be an absolute path.
+// If the path is specified as an absolute path, it is used directly
+// without checking for existence of an executable at that path.
+func ResolveNVIDIACDIHookPath(logger logger.Interface, nvidiaCDIHookPath string) string {
+	if filepath.Base(nvidiaCDIHookPath) == "nvidia-ctk" {
+		return resolveWithDefault(
+			logger,
+			"NVIDIA Container Toolkit CLI",
+			nvidiaCDIHookPath,
+			nvidiaCTKDefaultFilePath,
+		)
+	}
+	return resolveWithDefault(
+		logger,
+		"NVIDIA CDI Hook CLI",
+		nvidiaCDIHookPath,
+		nvidiaCDIHookDefaultFilePath,
 	)
 }
 

@@ -1,0 +1,74 @@
+# Please see the documentation for all configuration options:
+# https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
+
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    target-branch: main
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+    ignore:
+    - dependency-name: k8s.io/*
+    labels:
+    - dependencies
+
+  - package-ecosystem: "docker"
+    target-branch: main
+    directory: "/deployments/container"
+    schedule:
+      interval: "daily"
+
+  - package-ecosystem: "gomod"
+    # This defines a specific dependabot rule for the latest release-* branch.
+    target-branch: release-1.16
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+    ignore:
+    - dependency-name: k8s.io/*
+    labels:
+    - dependencies
+    - maintenance
+
+  - package-ecosystem: "docker"
+    target-branch: release-1.16
+    directory: "/deployments/container"
+    schedule:
+      interval: "daily"
+    labels:
+    - dependencies
+    - maintenance
+
+  - package-ecosystem: "gomod"
+    target-branch: main
+    directory: "deployments/devel"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+
+  # A dependabot rule to bump the golang version.
+  - package-ecosystem: "docker"
+    target-branch: main
+    directory: "/deployments/devel"
+    schedule:
+      interval: "daily"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+
+  # Allow dependabot to update the libnvidia-container submodule.
+  - package-ecosystem: "gitsubmodule"
+    target-branch: main
+    directory: "/"
+    allow:
+    - dependency-name: "third_party/libnvidia-container"
+    schedule:
+      interval: "daily"
+    labels:
+    - dependencies
+    - libnvidia-container

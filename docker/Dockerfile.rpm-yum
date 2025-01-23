@@ -17,6 +17,13 @@
 ARG BASEIMAGE
 FROM ${BASEIMAGE}
 
+# centos:stream8 is EOL.
+# We switch to the vault repositories for this base image.
+ARG BASEIMAGE
+RUN sed -i -e "s|mirrorlist=|#mirrorlist=|g" \
+            -e "s|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g" \
+                /etc/yum.repos.d/CentOS-*
+
 RUN yum install -y \
         ca-certificates \
         gcc \
@@ -33,7 +40,7 @@ RUN set -eux; \
     case "${arch##*-}" in \
         x86_64 | amd64) ARCH='amd64' ;; \
         ppc64el | ppc64le) ARCH='ppc64le' ;; \
-        aarch64) ARCH='arm64' ;; \
+        aarch64 | arm64) ARCH='arm64' ;; \
         *) echo "unsupported architecture"; exit 1 ;; \
     esac; \
     wget -nv -O - https://storage.googleapis.com/golang/go${GOLANG_VERSION}.linux-${ARCH}.tar.gz \

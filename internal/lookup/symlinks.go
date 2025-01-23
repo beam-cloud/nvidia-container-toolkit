@@ -62,6 +62,7 @@ func (p symlinkChain) Locate(pattern string) ([]string, error) {
 		return candidates, nil
 	}
 
+	var filenames []string
 	found := make(map[string]bool)
 	for len(candidates) > 0 {
 		candidate := candidates[0]
@@ -70,6 +71,7 @@ func (p symlinkChain) Locate(pattern string) ([]string, error) {
 			continue
 		}
 		found[candidate] = true
+		filenames = append(filenames, candidate)
 
 		target, err := symlinks.Resolve(candidate)
 		if err != nil {
@@ -88,11 +90,6 @@ func (p symlinkChain) Locate(pattern string) ([]string, error) {
 			candidates = append(candidates, target)
 		}
 	}
-
-	var filenames []string
-	for f := range found {
-		filenames = append(filenames, f)
-	}
 	return filenames, nil
 }
 
@@ -103,14 +100,19 @@ func (p symlink) Locate(pattern string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(candidates) != 1 {
-		return nil, fmt.Errorf("failed to uniquely resolve symlink %v: %v", pattern, candidates)
-	}
 
-	target, err := filepath.EvalSymlinks(candidates[0])
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve link: %v", err)
+	var targets []string
+	seen := make(map[string]bool)
+	for _, candidate := range candidates {
+		target, err := filepath.EvalSymlinks(candidate)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve link: %w", err)
+		}
+		if seen[target] {
+			continue
+		}
+		seen[target] = true
+		targets = append(targets, target)
 	}
-
-	return []string{target}, err
+	return targets, err
 }

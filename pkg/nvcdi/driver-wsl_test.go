@@ -20,8 +20,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/discover"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/discover"
 
 	testlog "github.com/sirupsen/logrus/hooks/test"
 )
@@ -91,8 +92,8 @@ func TestNvidiaSMISymlinkHook(t *testing.T) {
 			expectedHooks: []discover.Hook{
 				{
 					Lifecycle: "createContainer",
-					Path:      "nvidia-ctk",
-					Args: []string{"nvidia-ctk", "hook", "create-symlinks",
+					Path:      "nvidia-cdi-hook",
+					Args: []string{"nvidia-cdi-hook", "create-symlinks",
 						"--link", "nvidia-smi::/usr/bin/nvidia-smi"},
 				},
 			},
@@ -111,8 +112,8 @@ func TestNvidiaSMISymlinkHook(t *testing.T) {
 			expectedHooks: []discover.Hook{
 				{
 					Lifecycle: "createContainer",
-					Path:      "nvidia-ctk",
-					Args: []string{"nvidia-ctk", "hook", "create-symlinks",
+					Path:      "nvidia-cdi-hook",
+					Args: []string{"nvidia-cdi-hook", "create-symlinks",
 						"--link", "/some/path/nvidia-smi::/usr/bin/nvidia-smi"},
 				},
 			},
@@ -131,8 +132,8 @@ func TestNvidiaSMISymlinkHook(t *testing.T) {
 			expectedHooks: []discover.Hook{
 				{
 					Lifecycle: "createContainer",
-					Path:      "nvidia-ctk",
-					Args: []string{"nvidia-ctk", "hook", "create-symlinks",
+					Path:      "nvidia-cdi-hook",
+					Args: []string{"nvidia-cdi-hook", "create-symlinks",
 						"--link", "/some/path/nvidia-smi::/usr/bin/nvidia-smi"},
 				},
 			},
@@ -142,9 +143,9 @@ func TestNvidiaSMISymlinkHook(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
 			m := nvidiaSMISimlinkHook{
-				logger:        logger,
-				mountsFrom:    tc.mounts,
-				nvidiaCTKPath: "nvidia-ctk",
+				logger:            logger,
+				mountsFrom:        tc.mounts,
+				nvidiaCDIHookPath: "nvidia-cdi-hook",
 			}
 
 			devices, err := m.Devices()

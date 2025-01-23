@@ -3,29 +3,30 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
 
 	log "github.com/sirupsen/logrus"
-	cli "github.com/urfave/cli/v2"
-	unix "golang.org/x/sys/unix"
+	"github.com/urfave/cli/v2"
+	"golang.org/x/sys/unix"
+
+	"github.com/NVIDIA/nvidia-container-toolkit/tools/container/runtime"
+	"github.com/NVIDIA/nvidia-container-toolkit/tools/container/toolkit"
 )
 
 const (
-	runDir         = "/run/nvidia"
-	pidFile        = runDir + "/toolkit.pid"
-	toolkitCommand = "toolkit"
-	toolkitSubDir  = "toolkit"
+	toolkitPidFilename = "toolkit.pid"
+	defaultPidFile     = "/run/nvidia/toolkit/" + toolkitPidFilename
+	toolkitSubDir      = "toolkit"
 
-	defaultToolkitArgs = ""
 	defaultRuntime     = "docker"
 	defaultRuntimeArgs = ""
 )
 
 var availableRuntimes = map[string]struct{}{"docker": {}, "crio": {}, "containerd": {}}
+var defaultLowLevelRuntimes = []string{"docker-runc", "runc", "crun"}
 
 var waitingForSignal = make(chan bool, 1)
 var signalReceived = make(chan bool, 1)
@@ -36,6 +37,14 @@ type options struct {
 	runtime     string
 	runtimeArgs string
 	root        string
+	pidFile     string
+
+	toolkitOptions toolkit.Options
+	runtimeOptions runtime.Options
+}
+
+func (o options) toolkitRoot() string {
+	return filepath.Join(o.root, toolkitSubDir)
 }
 
 // Version defines the CLI version. This is set at build time using LD FLAGS
@@ -48,7 +57,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	options := options{}
+	options := options{
+		toolkitOptions: toolkit.Options{},
+	}
 	// Create the top-level CLI
 	c := cli.NewApp()
 	c.Name = "nvidia-toolkit"
@@ -56,6 +67,9 @@ func main() {
 	c.UsageText = "[DESTINATION] [-n | --no-daemon] [-r | --runtime] [-u | --runtime-args]"
 	c.Description = "DESTINATION points to the host path underneath which the nvidia-container-toolkit should be installed.\nIt will be installed at ${DESTINATION}/toolkit"
 	c.Version = Version
+	c.Before = func(ctx *cli.Context) error {
+		return validateFlags(ctx, &options)
+	}
 	c.Action = func(ctx *cli.Context) error {
 		return Run(ctx, &options)
 	}
@@ -65,7 +79,7 @@ func main() {
 		&cli.BoolFlag{
 			Name:        "no-daemon",
 			Aliases:     []string{"n"},
-			Usage:       "terminate immediatly after setting up the runtime. Note that no cleanup will be performed",
+			Usage:       "terminate immediately after setting up the runtime. Note that no cleanup will be performed",
 			Destination: &options.noDaemon,
 			EnvVars:     []string{"NO_DAEMON"},
 		},
@@ -77,6 +91,7 @@ func main() {
 			Destination: &options.runtime,
 			EnvVars:     []string{"RUNTIME"},
 		},
+		// TODO: Remove runtime-args
 		&cli.StringFlag{
 			Name:        "runtime-args",
 			Aliases:     []string{"u"},
@@ -92,7 +107,17 @@ func main() {
 			Destination: &options.root,
 			EnvVars:     []string{"ROOT"},
 		},
+		&cli.StringFlag{
+			Name:        "pid-file",
+			Value:       defaultPidFile,
+			Usage:       "the path to a toolkit.pid file to ensure that only a single configuration instance is running",
+			Destination: &options.pidFile,
+			EnvVars:     []string{"TOOLKIT_PID_FILE", "PID_FILE"},
+		},
 	}
+
+	c.Flags = append(c.Flags, toolkit.Flags(&options.toolkitOptions)...)
+	c.Flags = append(c.Flags, runtime.Flags(&options.runtimeOptions)...)
 
 	// Run the CLI
 	log.Infof("Starting %v", c.Name)
@@ -104,6 +129,19 @@ func main() {
 	log.Infof("Completed %v", c.Name)
 }
 
+func validateFlags(_ *cli.Context, o *options) error {
+	if filepath.Base(o.pidFile) != toolkitPidFilename {
+		return fmt.Errorf("invalid toolkit.pid path %v", o.pidFile)
+	}
+	if err := toolkit.ValidateOptions(&o.toolkitOptions, o.toolkitRoot()); err != nil {
+		return err
+	}
+	if err := runtime.ValidateOptions(&o.runtimeOptions, o.runtime, o.toolkitRoot()); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Run runs the core logic of the CLI
 func Run(c *cli.Context, o *options) error {
 	err := verifyFlags(o)
@@ -111,18 +149,27 @@ func Run(c *cli.Context, o *options) error {
 		return fmt.Errorf("unable to verify flags: %v", err)
 	}
 
-	err = initialize()
+	err = initialize(o.pidFile)
 	if err != nil {
 		return fmt.Errorf("unable to initialize: %v", err)
 	}
-	defer shutdown()
+	defer shutdown(o.pidFile)
 
-	err = installToolkit(o)
+	if len(o.toolkitOptions.ContainerRuntimeRuntimes.Value()) == 0 {
+		lowlevelRuntimePaths, err := runtime.GetLowlevelRuntimePaths(&o.runtimeOptions, o.runtime)
+		if err != nil {
+			return fmt.Errorf("unable to determine runtime options: %w", err)
+		}
+		lowlevelRuntimePaths = append(lowlevelRuntimePaths, defaultLowLevelRuntimes...)
+
+		o.toolkitOptions.ContainerRuntimeRuntimes = *cli.NewStringSlice(lowlevelRuntimePaths...)
+	}
+	err = toolkit.Install(c, &o.toolkitOptions, o.toolkitRoot())
 	if err != nil {
 		return fmt.Errorf("unable to install toolkit: %v", err)
 	}
 
-	err = setupRuntime(o)
+	err = runtime.Setup(c, &o.runtimeOptions, o.runtime)
 	if err != nil {
 		return fmt.Errorf("unable to setup runtime: %v", err)
 	}
@@ -133,7 +180,7 @@ func Run(c *cli.Context, o *options) error {
 			return fmt.Errorf("unable to wait for signal: %v", err)
 		}
 
-		err = cleanupRuntime(o)
+		err = runtime.Cleanup(c, &o.runtimeOptions, o.runtime)
 		if err != nil {
 			return fmt.Errorf("unable to cleanup runtime: %v", err)
 		}
@@ -143,7 +190,7 @@ func Run(c *cli.Context, o *options) error {
 }
 
 // ParseArgs checks if a single positional argument was defined and extracts this the root.
-// If no positional arguments are defined, the it is assumed that the root is specified as a flag.
+// If no positional arguments are defined, it is assumed that the root is specified as a flag.
 func ParseArgs(args []string) ([]string, string, error) {
 	log.Infof("Parsing arguments")
 
@@ -182,8 +229,15 @@ func verifyFlags(o *options) error {
 	return nil
 }
 
-func initialize() error {
+func initialize(pidFile string) error {
 	log.Infof("Initializing")
+
+	if dir := filepath.Dir(pidFile); dir != "" {
+		err := os.MkdirAll(dir, 0755)
+		if err != nil {
+			return fmt.Errorf("unable to create folder for pidfile: %w", err)
+		}
+	}
 
 	f, err := os.Create(pidFile)
 	if err != nil {
@@ -211,49 +265,10 @@ func initialize() error {
 			signalReceived <- true
 		default:
 			log.Infof("Signal received, exiting early")
-			shutdown()
+			shutdown(pidFile)
 			os.Exit(0)
 		}
 	}()
-
-	return nil
-}
-
-func installToolkit(o *options) error {
-	log.Infof("Installing toolkit")
-
-	cmdline := []string{
-		toolkitCommand,
-		"install",
-		"--toolkit-root",
-		filepath.Join(o.root, toolkitSubDir),
-	}
-
-	cmd := exec.Command("sh", "-c", strings.Join(cmdline, " "))
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	err := cmd.Run()
-	if err != nil {
-		return fmt.Errorf("error running %v command: %v", cmdline, err)
-	}
-
-	return nil
-}
-
-func setupRuntime(o *options) error {
-	toolkitDir := filepath.Join(o.root, toolkitSubDir)
-
-	log.Infof("Setting up runtime")
-
-	cmdline := fmt.Sprintf("%v setup %v %v\n", o.runtime, o.runtimeArgs, toolkitDir)
-
-	cmd := exec.Command("sh", "-c", cmdline)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	err := cmd.Run()
-	if err != nil {
-		return fmt.Errorf("error running %v command: %v", o.runtime, err)
-	}
 
 	return nil
 }
@@ -265,25 +280,7 @@ func waitForSignal() error {
 	return nil
 }
 
-func cleanupRuntime(o *options) error {
-	toolkitDir := filepath.Join(o.root, toolkitSubDir)
-
-	log.Infof("Cleaning up Runtime")
-
-	cmdline := fmt.Sprintf("%v cleanup %v %v\n", o.runtime, o.runtimeArgs, toolkitDir)
-
-	cmd := exec.Command("sh", "-c", cmdline)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	err := cmd.Run()
-	if err != nil {
-		return fmt.Errorf("error running %v command: %v", o.runtime, err)
-	}
-
-	return nil
-}
-
-func shutdown() {
+func shutdown(pidFile string) {
 	log.Infof("Shutting Down")
 
 	err := os.Remove(pidFile)

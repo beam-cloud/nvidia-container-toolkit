@@ -33,7 +33,7 @@ variables:
   # On the multi-arch builder we don't need the qemu setup.
   SKIP_QEMU_SETUP: "1"
   # Define the public staging registry
-  STAGING_REGISTRY: registry.gitlab.com/nvidia/container-toolkit/container-toolkit/staging
+  STAGING_REGISTRY: ghcr.io/nvidia
   STAGING_VERSION: ${CI_COMMIT_SHORT_SHA}
   ARTIFACTORY_REPO_BASE: "https://urm.nvidia.com/artifactory/sw-gpu-cloudnative"
   KITMAKER_RELEASE_FOLDER: "kitmaker"
@@ -67,12 +67,7 @@ variables:
       regctl manifest get ${IN_REGISTRY}/${IN_IMAGE_NAME}:${IN_VERSION}-${DIST} --list > /dev/null && echo "${IN_REGISTRY}/${IN_IMAGE_NAME}:${IN_VERSION}-${DIST}" || ( echo "${IN_REGISTRY}/${IN_IMAGE_NAME}:${IN_VERSION}-${DIST} does not exist" && sleep infinity )
   script:
     - regctl registry login "${OUT_REGISTRY}" -u "${OUT_REGISTRY_USER}" -p "${OUT_REGISTRY_TOKEN}"
-    - make -f build/container/Makefile IMAGE=${IN_REGISTRY}/${IN_IMAGE_NAME}:${IN_VERSION}-${DIST} OUT_IMAGE=${OUT_IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-${DIST} push-${DIST}
-
-image-centos7:
-  extends:
-    - .dist-centos7
-    - .image-pull
+    - make -f deployments/container/Makefile IMAGE=${IN_REGISTRY}/${IN_IMAGE_NAME}:${IN_VERSION}-${DIST} OUT_IMAGE=${OUT_IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-${DIST} push-${DIST}
 
 image-ubi8:
   extends:
@@ -132,14 +127,6 @@ image-packaging:
       - policy_evaluation.json
 
 # Define the scan targets
-scan-centos7-amd64:
-  extends:
-    - .dist-centos7
-    - .platform-amd64
-    - .scan
-  needs:
-    - image-centos7
-
 scan-ubuntu20.04-amd64:
   extends:
     - .dist-ubuntu20.04
@@ -243,11 +230,6 @@ release:staging-ubuntu20.04:
 
 # Define the external release targets
 # Release to NGC
-release:ngc-centos7:
-  extends:
-    - .dist-centos7
-    - .release:ngc
-
 release:ngc-ubuntu20.04:
   extends:
     - .dist-ubuntu20.04
@@ -262,3 +244,62 @@ release:ngc-packaging:
   extends:
     - .dist-packaging
     - .release:ngc
+
+# Define the external image signing steps for NGC
+# Download the ngc cli binary for use in the sign steps
+.ngccli-setup:
+  before_script:
+    - apt-get update && apt-get install -y curl unzip jq
+    - |
+      if [ -z "${NGCCLI_VERSION}" ]; then
+        NGC_VERSION_URL="https://api.ngc.nvidia.com/v2/resources/nvidia/ngc-apps/ngc_cli/versions"
+        # Extract the latest version from the JSON data using jq
+        export NGCCLI_VERSION=$(curl -s $NGC_VERSION_URL | jq -r '.recipe.latestVersionIdStr')
+      fi
+      echo "NGCCLI_VERSION ${NGCCLI_VERSION}"
+    - curl -sSLo ngccli_linux.zip https://api.ngc.nvidia.com/v2/resources/nvidia/ngc-apps/ngc_cli/versions/${NGCCLI_VERSION}/files/ngccli_linux.zip
+    - unzip ngccli_linux.zip
+    - chmod u+x ngc-cli/ngc
+
+# .sign forms the base of the deployment jobs which signs images in the CI registry.
+# This is extended with the image name and version to be deployed.
+.sign:ngc:
+  image: ubuntu:latest
+  stage: sign
+  rules:
+    - if: $CI_COMMIT_TAG
+  variables:
+    NGC_CLI_API_KEY: "${NGC_REGISTRY_TOKEN}"
+    IMAGE_NAME: "${NGC_REGISTRY_IMAGE}"
+    IMAGE_TAG: "${CI_COMMIT_TAG}-${DIST}"
+  retry:
+    max: 2
+  before_script:
+    - !reference [.ngccli-setup, before_script]
+    # We ensure that the IMAGE_NAME and IMAGE_TAG is set
+    - 'echo Image Name: ${IMAGE_NAME} && [[ -n "${IMAGE_NAME}" ]] || exit 1'
+    - 'echo Image Tag: ${IMAGE_TAG} && [[ -n "${IMAGE_TAG}" ]] || exit 1'
+  script:
+    - 'echo "Signing the image ${IMAGE_NAME}:${IMAGE_TAG}"'
+    - ngc-cli/ngc registry image publish --source ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:${IMAGE_TAG} --public --discoverable --allow-guest --sign --org nvidia
+
+sign:ngc-ubuntu20.04:
+  extends:
+    - .dist-ubuntu20.04
+    - .sign:ngc
+  needs:
+    - release:ngc-ubuntu20.04
+
+sign:ngc-ubi8:
+  extends:
+    - .dist-ubi8
+    - .sign:ngc
+  needs:
+    - release:ngc-ubi8
+
+sign:ngc-packaging:
+  extends:
+    - .dist-packaging
+    - .sign:ngc
+  needs:
+    - release:ngc-packaging

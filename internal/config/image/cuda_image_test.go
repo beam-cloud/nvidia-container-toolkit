@@ -17,8 +17,10 @@
 package image
 
 import (
+	"path/filepath"
 	"testing"
 
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -126,8 +128,120 @@ func TestGetRequirements(t *testing.T) {
 			requirements, err := image.GetRequirements()
 			require.NoError(t, err)
 			require.ElementsMatch(t, tc.requirements, requirements)
-
 		})
 
 	}
+}
+
+func TestGetVisibleDevicesFromMounts(t *testing.T) {
+	var tests = []struct {
+		description     string
+		mounts          []specs.Mount
+		expectedDevices []string
+	}{
+		{
+			description:     "No mounts",
+			mounts:          nil,
+			expectedDevices: nil,
+		},
+		{
+			description: "Host path is not /dev/null",
+			mounts: []specs.Mount{
+				{
+					Source:      "/not/dev/null",
+					Destination: filepath.Join(DeviceListAsVolumeMountsRoot, "GPU0"),
+				},
+			},
+			expectedDevices: nil,
+		},
+		{
+			description: "Container path is not prefixed by 'root'",
+			mounts: []specs.Mount{
+				{
+					Source:      "/dev/null",
+					Destination: filepath.Join("/other/prefix", "GPU0"),
+				},
+			},
+			expectedDevices: nil,
+		},
+		{
+			description: "Container path is only 'root'",
+			mounts: []specs.Mount{
+				{
+					Source:      "/dev/null",
+					Destination: DeviceListAsVolumeMountsRoot,
+				},
+			},
+			expectedDevices: nil,
+		},
+		{
+			description:     "Discover 2 devices",
+			mounts:          makeTestMounts("GPU0", "GPU1"),
+			expectedDevices: []string{"GPU0", "GPU1"},
+		},
+		{
+			description:     "Discover 2 devices with slashes in the name",
+			mounts:          makeTestMounts("GPU0-MIG0/0/1", "GPU1-MIG0/0/1"),
+			expectedDevices: []string{"GPU0-MIG0/0/1", "GPU1-MIG0/0/1"},
+		},
+		{
+			description:     "cdi devices are ignored",
+			mounts:          makeTestMounts("GPU0", "cdi/nvidia.com/gpu=all", "GPU1"),
+			expectedDevices: []string{"GPU0", "GPU1"},
+		},
+		{
+			description:     "imex devices are ignored",
+			mounts:          makeTestMounts("GPU0", "imex/0", "GPU1"),
+			expectedDevices: []string{"GPU0", "GPU1"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.description, func(t *testing.T) {
+			image, _ := New(WithMounts(tc.mounts))
+			require.Equal(t, tc.expectedDevices, image.VisibleDevicesFromMounts())
+		})
+	}
+}
+
+func TestImexChannelsFromEnvVar(t *testing.T) {
+	testCases := []struct {
+		description string
+		env         []string
+		expected    []string
+	}{
+		{
+			description: "no imex channels specified",
+		},
+		{
+			description: "imex channel specified",
+			env: []string{
+				"NVIDIA_IMEX_CHANNELS=3,4",
+			},
+			expected: []string{"3", "4"},
+		},
+	}
+
+	for _, tc := range testCases {
+		for id, baseEnvvars := range map[string][]string{"": nil, "legacy": {"CUDA_VERSION=1.2.3"}} {
+			t.Run(tc.description+id, func(t *testing.T) {
+				i, err := NewCUDAImageFromEnv(append(baseEnvvars, tc.env...))
+				require.NoError(t, err)
+
+				channels := i.ImexChannelsFromEnvVar()
+				require.EqualValues(t, tc.expected, channels)
+			})
+		}
+	}
+}
+
+func makeTestMounts(paths ...string) []specs.Mount {
+	var mounts []specs.Mount
+	for _, path := range paths {
+		mount := specs.Mount{
+			Source:      "/dev/null",
+			Destination: filepath.Join(DeviceListAsVolumeMountsRoot, path),
+		}
+		mounts = append(mounts, mount)
+	}
+	return mounts
 }
