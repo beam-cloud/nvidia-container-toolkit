@@ -287,7 +287,7 @@ func (hookConfig *hookConfig) getNvidiaConfig(image image.CUDA, privileged bool)
 	}
 }
 
-func (hookConfig *hookConfig) getContainerConfig(OCIConfigPath string) (config containerConfig) {
+func (hookConfig *hookConfig) getContainerConfig(ociConfigPath string) (config containerConfig) {
 	var h HookState
 	d := json.NewDecoder(os.Stdin)
 	if err := d.Decode(&h); err != nil {
@@ -299,8 +299,8 @@ func (hookConfig *hookConfig) getContainerConfig(OCIConfigPath string) (config c
 	// 	b = h.BundlePath
 	// }
 
-	log.Println("Using config path: ", OCIConfigPath)
-	s := loadSpec(OCIConfigPath)
+	log.Println("Using config path: ", ociConfigPath)
+	s := loadSpec(ociConfigPath)
 
 	image, err := image.New(
 		image.WithEnv(s.Process.Env),
