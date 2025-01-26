@@ -19,13 +19,14 @@ package oci
 import (
 	"fmt"
 
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
 	"github.com/opencontainers/runtime-spec/specs-go"
+
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
 )
 
-// SpecModifier defines an interace for modifying a (raw) OCI spec
+// SpecModifier defines an interface for modifying a (raw) OCI spec
 type SpecModifier interface {
-	// Modify is a method that accepts a pointer to an OCI Srec and returns an
+	// Modify is a method that accepts a pointer to an OCI Spec and returns an
 	// error. The intention is that the function would modify the spec in-place.
 	Modify(*specs.Spec) error
 }

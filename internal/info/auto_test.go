@@ -19,9 +19,12 @@ package info
 import (
 	"testing"
 
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/config/image"
+	"github.com/NVIDIA/go-nvlib/pkg/nvlib/info"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	testlog "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/config/image"
 )
 
 func TestResolveAutoMode(t *testing.T) {
@@ -32,7 +35,8 @@ func TestResolveAutoMode(t *testing.T) {
 		mode         string
 		expectedMode string
 		info         map[string]bool
-		image        image.CUDA
+		envmap       map[string]string
+		mounts       []string
 	}{
 		{
 			description:  "non-auto resolves to input",
@@ -119,7 +123,7 @@ func TestResolveAutoMode(t *testing.T) {
 			description:  "cdi devices resolves to cdi",
 			mode:         "auto",
 			expectedMode: "cdi",
-			image: image.CUDA{
+			envmap: map[string]string{
 				"NVIDIA_VISIBLE_DEVICES": "nvidia.com/gpu=all",
 			},
 		},
@@ -127,14 +131,14 @@ func TestResolveAutoMode(t *testing.T) {
 			description:  "multiple cdi devices resolves to cdi",
 			mode:         "auto",
 			expectedMode: "cdi",
-			image: image.CUDA{
+			envmap: map[string]string{
 				"NVIDIA_VISIBLE_DEVICES": "nvidia.com/gpu=0,nvidia.com/gpu=1",
 			},
 		},
 		{
 			description: "at least one non-cdi device resolves to legacy",
 			mode:        "auto",
-			image: image.CUDA{
+			envmap: map[string]string{
 				"NVIDIA_VISIBLE_DEVICES": "nvidia.com/gpu=0,0",
 			},
 			info: map[string]bool{
@@ -147,7 +151,7 @@ func TestResolveAutoMode(t *testing.T) {
 		{
 			description: "at least one non-cdi device resolves to csv",
 			mode:        "auto",
-			image: image.CUDA{
+			envmap: map[string]string{
 				"NVIDIA_VISIBLE_DEVICES": "nvidia.com/gpu=0,0",
 			},
 			info: map[string]bool{
@@ -157,27 +161,79 @@ func TestResolveAutoMode(t *testing.T) {
 			},
 			expectedMode: "csv",
 		},
+		{
+			description: "cdi mount devices resolves to CDI",
+			mode:        "auto",
+			mounts: []string{
+				"/var/run/nvidia-container-devices/cdi/nvidia.com/gpu/0",
+			},
+			expectedMode: "cdi",
+		},
+		{
+			description: "cdi mount and non-CDI devices resolves to legacy",
+			mode:        "auto",
+			mounts: []string{
+				"/var/run/nvidia-container-devices/cdi/nvidia.com/gpu/0",
+				"/var/run/nvidia-container-devices/all",
+			},
+			info: map[string]bool{
+				"nvml":  true,
+				"tegra": false,
+				"nvgpu": false,
+			},
+			expectedMode: "legacy",
+		},
+		{
+			description: "cdi mount and non-CDI envvar resolves to legacy",
+			mode:        "auto",
+			envmap: map[string]string{
+				"NVIDIA_VISIBLE_DEVICES": "0",
+			},
+			mounts: []string{
+				"/var/run/nvidia-container-devices/cdi/nvidia.com/gpu/0",
+			},
+			info: map[string]bool{
+				"nvml":  true,
+				"tegra": false,
+				"nvgpu": false,
+			},
+			expectedMode: "legacy",
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			info := &infoInterfaceMock{
+			properties := &info.PropertyExtractorMock{
 				HasNvmlFunc: func() (bool, string) {
 					return tc.info["nvml"], "nvml"
+				},
+				HasDXCoreFunc: func() (bool, string) {
+					return tc.info["dxcore"], "dxcore"
 				},
 				IsTegraSystemFunc: func() (bool, string) {
 					return tc.info["tegra"], "tegra"
 				},
-				UsesNVGPUModuleFunc: func() (bool, string) {
+				HasTegraFilesFunc: func() (bool, string) {
+					return tc.info["tegra"], "tegra"
+				},
+				UsesOnlyNVGPUModuleFunc: func() (bool, string) {
 					return tc.info["nvgpu"], "nvgpu"
 				},
 			}
 
-			r := resolver{
-				logger: logger,
-				info:   info,
+			var mounts []specs.Mount
+			for _, d := range tc.mounts {
+				mount := specs.Mount{
+					Source:      "/dev/null",
+					Destination: d,
+				}
+				mounts = append(mounts, mount)
 			}
-			mode := r.resolveMode(tc.mode, tc.image)
+			image, _ := image.New(
+				image.WithEnvMap(tc.envmap),
+				image.WithMounts(mounts),
+			)
+			mode := resolveMode(logger, tc.mode, image, properties)
 			require.EqualValues(t, tc.expectedMode, mode)
 		})
 	}

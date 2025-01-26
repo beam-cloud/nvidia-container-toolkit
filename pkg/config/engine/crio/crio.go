@@ -19,12 +19,35 @@ package crio
 import (
 	"fmt"
 
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
 	"github.com/NVIDIA/nvidia-container-toolkit/pkg/config/engine"
-	"github.com/pelletier/go-toml"
+	"github.com/NVIDIA/nvidia-container-toolkit/pkg/config/toml"
 )
 
 // Config represents the cri-o config
-type Config toml.Tree
+type Config struct {
+	*toml.Tree
+	Logger logger.Interface
+}
+
+type crioRuntime struct {
+	tree *toml.Tree
+}
+
+var _ engine.RuntimeConfig = (*crioRuntime)(nil)
+
+// GetBinaryPath retrieves the path to the low-level runtime binary for a runtime.
+// If no path is available, the empty string is returned.
+func (c *crioRuntime) GetBinaryPath() string {
+	if c.tree != nil {
+		if binaryPath, ok := c.tree.GetPath([]string{"runtime_path"}).(string); ok {
+			return binaryPath
+		}
+	}
+	return ""
+}
+
+var _ engine.Interface = (*Config)(nil)
 
 // New creates a cri-o config with the specified options
 func New(opts ...Option) (engine.Interface, error) {
@@ -32,8 +55,23 @@ func New(opts ...Option) (engine.Interface, error) {
 	for _, opt := range opts {
 		opt(b)
 	}
+	if b.logger == nil {
+		b.logger = logger.New()
+	}
+	if b.configSource == nil {
+		b.configSource = toml.FromFile(b.path)
+	}
 
-	return b.build()
+	tomlConfig, err := b.configSource.Load()
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := Config{
+		Tree:   tomlConfig,
+		Logger: b.logger,
+	}
+	return &cfg, nil
 }
 
 // AddRuntime adds a new runtime to the crio config
@@ -42,12 +80,16 @@ func (c *Config) AddRuntime(name string, path string, setAsDefault bool) error {
 		return fmt.Errorf("config is nil")
 	}
 
-	config := (toml.Tree)(*c)
+	config := *c.Tree
 
-	switch runc := config.Get("crio.runtime.runtimes.runc").(type) {
-	case *toml.Tree:
-		runc, _ = toml.Load(runc.String())
-		config.SetPath([]string{"crio", "runtime", "runtimes", name}, runc)
+	runtimeNamesForConfig := engine.GetLowLevelRuntimes(c)
+	for _, r := range runtimeNamesForConfig {
+		if options, ok := config.GetPath([]string{"crio", "runtime", "runtimes", r}).(*toml.Tree); ok {
+			c.Logger.Debugf("using options from runtime %v: %v", r, options.String())
+			options, _ = toml.Load(options.String())
+			config.SetPath([]string{"crio", "runtime", "runtimes", name}, options)
+			break
+		}
 	}
 
 	config.SetPath([]string{"crio", "runtime", "runtimes", name, "runtime_path"}, path)
@@ -57,14 +99,16 @@ func (c *Config) AddRuntime(name string, path string, setAsDefault bool) error {
 		config.SetPath([]string{"crio", "runtime", "default_runtime"}, name)
 	}
 
-	*c = (Config)(config)
+	*c.Tree = config
 	return nil
 }
 
 // DefaultRuntime returns the default runtime for the cri-o config
-func (c Config) DefaultRuntime() string {
-	config := (toml.Tree)(c)
-	if runtime, ok := config.GetPath([]string{"crio", "runtime", "default_runtime"}).(string); ok {
+func (c *Config) DefaultRuntime() string {
+	if c == nil || c.Tree == nil {
+		return ""
+	}
+	if runtime, ok := c.GetPath([]string{"crio", "runtime", "default_runtime"}).(string); ok {
 		return runtime
 	}
 	return ""
@@ -76,7 +120,7 @@ func (c *Config) RemoveRuntime(name string) error {
 		return nil
 	}
 
-	config := (toml.Tree)(*c)
+	config := *c.Tree
 	if runtime, ok := config.GetPath([]string{"crio", "runtime", "default_runtime"}).(string); ok {
 		if runtime == name {
 			config.DeletePath([]string{"crio", "runtime", "default_runtime"})
@@ -95,18 +139,32 @@ func (c *Config) RemoveRuntime(name string) error {
 		}
 	}
 
-	*c = (Config)(config)
+	*c.Tree = config
 	return nil
 }
 
-// Save writes the config to the specified path
-func (c Config) Save(path string) (int64, error) {
-	config := (toml.Tree)(c)
-	output, err := config.Marshal()
-	if err != nil {
-		return 0, fmt.Errorf("unable to convert to TOML: %v", err)
+func (c *Config) GetRuntimeConfig(name string) (engine.RuntimeConfig, error) {
+	if c == nil || c.Tree == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+	runtimeData := c.GetSubtreeByPath([]string{"crio", "runtime", "runtimes", name})
+	return &crioRuntime{
+		tree: runtimeData,
+	}, nil
+}
+
+// CommandLineSource returns the CLI-based crio config loader
+func CommandLineSource(hostRoot string) toml.Loader {
+	return toml.LoadFirst(
+		toml.FromCommandLine(chrootIfRequired(hostRoot, "crio", "status", "config")...),
+		toml.FromCommandLine(chrootIfRequired(hostRoot, "crio-status", "config")...),
+	)
+}
+
+func chrootIfRequired(hostRoot string, commandLine ...string) []string {
+	if hostRoot == "" || hostRoot == "/" {
+		return commandLine
 	}
 
-	n, err := engine.Config(path).Write(output)
-	return int64(n), err
+	return append([]string{"chroot", hostRoot}, commandLine...)
 }

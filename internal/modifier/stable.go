@@ -19,9 +19,10 @@ package modifier
 import (
 	"path/filepath"
 
+	"github.com/opencontainers/runtime-spec/specs-go"
+
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/oci"
-	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 // NewStableRuntimeModifier creates an OCI spec modifier that inserts the NVIDIA Container Runtime Hook into an OCI
@@ -48,6 +49,7 @@ func (m stableRuntimeModifier) Modify(spec *specs.Spec) error {
 	// If an NVIDIA Container Runtime Hook already exists, we don't make any modifications to the spec.
 	if spec.Hooks != nil {
 		for _, hook := range spec.Hooks.Prestart {
+			hook := hook
 			if isNVIDIAContainerRuntimeHook(&hook) {
 				m.logger.Infof("Existing nvidia prestart hook (%v) found in OCI spec", hook.Path)
 				return nil

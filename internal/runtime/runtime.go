@@ -17,13 +17,16 @@
 package runtime
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/opencontainers/runtime-spec/specs-go"
+
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/config"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/info"
-	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/lookup/root"
 )
 
 // Run is an entry point that allows for idiomatic handling of errors
@@ -53,7 +56,9 @@ func (r rt) Run(argv []string) (rerr error) {
 		if rerr != nil {
 			r.logger.Errorf("%v", rerr)
 		}
-		r.logger.Reset()
+		if err := r.logger.Reset(); err != nil {
+			rerr = errors.Join(rerr, fmt.Errorf("failed to reset logger: %v", err))
+		}
 	}()
 
 	// We apply some config updates here to ensure that the config is valid in
@@ -61,19 +66,20 @@ func (r rt) Run(argv []string) (rerr error) {
 	if r.modeOverride != "" {
 		cfg.NVIDIAContainerRuntimeConfig.Mode = r.modeOverride
 	}
-	cfg.NVIDIACTKConfig.Path = config.ResolveNVIDIACTKPath(r.logger, cfg.NVIDIACTKConfig.Path)
-	cfg.NVIDIAContainerRuntimeHookConfig.Path = config.ResolveNVIDIAContainerRuntimeHookPath(r.logger, cfg.NVIDIAContainerRuntimeHookConfig.Path)
+	//nolint:staticcheck  // TODO(elezar): We should swith the nvidia-container-runtime from using nvidia-ctk to using nvidia-cdi-hook.
+	cfg.NVIDIACTKConfig.Path = config.ResolveNVIDIACTKPath(&logger.NullLogger{}, cfg.NVIDIACTKConfig.Path)
+	cfg.NVIDIAContainerRuntimeHookConfig.Path = config.ResolveNVIDIAContainerRuntimeHookPath(&logger.NullLogger{}, cfg.NVIDIAContainerRuntimeHookConfig.Path)
 
-	// Print the config to the output.
-	configJSON, err := json.MarshalIndent(cfg, "", "  ")
-	if err == nil {
-		r.logger.Infof("Running with config:\n%v", string(configJSON))
-	} else {
-		r.logger.Infof("Running with config:\n%+v", cfg)
-	}
+	// Log the config at Trace to allow for debugging if required.
+	r.logger.Tracef("Running with config: %+v", cfg)
 
-	r.logger.Debugf("Command line arguments: %v", argv)
-	runtime, err := newNVIDIAContainerRuntime(r.logger, cfg, argv)
+	driver := root.New(
+		root.WithLogger(r.logger),
+		root.WithDriverRoot(cfg.NVIDIAContainerCLIConfig.Root),
+	)
+
+	r.logger.Tracef("Command line arguments: %v", argv)
+	runtime, err := newNVIDIAContainerRuntime(r.logger, cfg, argv, driver)
 	if err != nil {
 		return fmt.Errorf("failed to create NVIDIA Container Runtime: %v", err)
 	}

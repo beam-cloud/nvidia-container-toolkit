@@ -19,10 +19,11 @@ package modifier
 import (
 	"path/filepath"
 
+	"github.com/opencontainers/runtime-spec/specs-go"
+
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/config"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/oci"
-	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 // nvidiaContainerRuntimeHookRemover is a spec modifer that detects and removes inserted nvidia-container-runtime hooks
@@ -49,6 +50,7 @@ func (m nvidiaContainerRuntimeHookRemover) Modify(spec *specs.Spec) error {
 	var newPrestart []specs.Hook
 
 	for _, hook := range spec.Hooks.Prestart {
+		hook := hook
 		if isNVIDIAContainerRuntimeHook(&hook) {
 			m.logger.Debugf("Removing hook %v", hook)
 			continue

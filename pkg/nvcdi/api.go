@@ -17,10 +17,11 @@
 package nvcdi
 
 import (
+	"github.com/NVIDIA/go-nvlib/pkg/nvlib/device"
+	"tags.cncf.io/container-device-interface/pkg/cdi"
+	"tags.cncf.io/container-device-interface/specs-go"
+
 	"github.com/NVIDIA/nvidia-container-toolkit/pkg/nvcdi/spec"
-	"github.com/container-orchestrated-devices/container-device-interface/pkg/cdi"
-	"github.com/container-orchestrated-devices/container-device-interface/specs-go"
-	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvlib/device"
 )
 
 const (
@@ -47,7 +48,8 @@ type Interface interface {
 	GetCommonEdits() (*cdi.ContainerEdits, error)
 	GetAllDeviceSpecs() ([]specs.Device, error)
 	GetGPUDeviceEdits(device.Device) (*cdi.ContainerEdits, error)
-	GetGPUDeviceSpecs(int, device.Device) (*specs.Device, error)
+	GetGPUDeviceSpecs(int, device.Device) ([]specs.Device, error)
 	GetMIGDeviceEdits(device.Device, device.MigDevice) (*cdi.ContainerEdits, error)
-	GetMIGDeviceSpecs(int, device.Device, int, device.MigDevice) (*specs.Device, error)
+	GetMIGDeviceSpecs(int, device.Device, int, device.MigDevice) ([]specs.Device, error)
+	GetDeviceSpecsByID(...string) ([]specs.Device, error)
 }

@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
+	"github.com/NVIDIA/nvidia-container-toolkit/pkg/config"
 	"github.com/NVIDIA/nvidia-container-toolkit/pkg/config/engine"
 )
 
@@ -31,6 +32,23 @@ const (
 // Config defines a docker config file.
 // TODO: This should not be public, but we need to access it from the tests in tools/container/docker
 type Config map[string]interface{}
+
+var _ engine.Interface = (*Config)(nil)
+
+type dockerRuntime map[string]interface{}
+
+var _ engine.RuntimeConfig = (*dockerRuntime)(nil)
+
+// GetBinaryPath retrieves the path to the low-level runtime binary for a runtime.
+// If no path is available, the empty string is returned.
+func (d dockerRuntime) GetBinaryPath() string {
+	if d == nil {
+		return ""
+	}
+
+	path, _ := d["path"].(string)
+	return path
+}
 
 // New creates a docker config with the specified options
 func New(opts ...Option) (engine.Interface, error) {
@@ -114,6 +132,11 @@ func (c *Config) RemoveRuntime(name string) error {
 	return nil
 }
 
+// Set sets the specified docker option
+func (c *Config) Set(key string, value interface{}) {
+	(*c)[key] = value
+}
+
 // Save writes the config to the specified path
 func (c Config) Save(path string) (int64, error) {
 	output, err := json.MarshalIndent(c, "", "    ")
@@ -121,6 +144,25 @@ func (c Config) Save(path string) (int64, error) {
 		return 0, fmt.Errorf("unable to convert to JSON: %v", err)
 	}
 
-	n, err := engine.Config(path).Write(output)
+	n, err := config.Raw(path).Write(output)
 	return int64(n), err
+}
+
+// GetRuntimeConfig returns the runtime info of the runtime passed as input
+func (c *Config) GetRuntimeConfig(name string) (engine.RuntimeConfig, error) {
+	if c == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+
+	cfg := *c
+
+	var runtimes map[string]interface{}
+	if _, ok := cfg["runtimes"]; ok {
+		runtimes = cfg["runtimes"].(map[string]interface{})
+		if r, ok := runtimes[name]; ok {
+			dr := dockerRuntime(r.(map[string]interface{}))
+			return &dr, nil
+		}
+	}
+	return &dockerRuntime{}, nil
 }

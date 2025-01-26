@@ -17,10 +17,12 @@
 package nvcdi
 
 import (
+	"github.com/NVIDIA/go-nvlib/pkg/nvlib/device"
+	"github.com/NVIDIA/go-nvlib/pkg/nvlib/info"
+	"github.com/NVIDIA/go-nvml/pkg/nvml"
+
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
 	"github.com/NVIDIA/nvidia-container-toolkit/pkg/nvcdi/transform"
-	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvlib/device"
-	"gitlab.com/nvidia/cloud-native/go-nvlib/pkg/nvml"
 )
 
 // Option is a function that configures the nvcdilib
@@ -33,10 +35,17 @@ func WithDeviceLib(devicelib device.Interface) Option {
 	}
 }
 
-// WithDeviceNamer sets the device namer for the library
-func WithDeviceNamer(namer DeviceNamer) Option {
+// WithInfoLib sets the info library for CDI spec generation.
+func WithInfoLib(infolib info.Interface) Option {
 	return func(l *nvcdilib) {
-		l.deviceNamer = namer
+		l.infolib = infolib
+	}
+}
+
+// WithDeviceNamers sets the device namer for the library
+func WithDeviceNamers(namers ...DeviceNamer) Option {
+	return func(l *nvcdilib) {
+		l.deviceNamers = namers
 	}
 }
 
@@ -44,6 +53,13 @@ func WithDeviceNamer(namer DeviceNamer) Option {
 func WithDriverRoot(root string) Option {
 	return func(l *nvcdilib) {
 		l.driverRoot = root
+	}
+}
+
+// WithDevRoot sets the root where /dev is located.
+func WithDevRoot(root string) Option {
+	return func(l *nvcdilib) {
+		l.devRoot = root
 	}
 }
 
@@ -55,9 +71,23 @@ func WithLogger(logger logger.Interface) Option {
 }
 
 // WithNVIDIACTKPath sets the path to the NVIDIA Container Toolkit CLI path for the library
+//
+// Deprecated: Use WithNVIDIACDIHookPath instead.
 func WithNVIDIACTKPath(path string) Option {
+	return WithNVIDIACDIHookPath(path)
+}
+
+// WithNVIDIACDIHookPath sets the path to the NVIDIA Container Toolkit CLI path for the library
+func WithNVIDIACDIHookPath(path string) Option {
 	return func(l *nvcdilib) {
-		l.nvidiaCTKPath = path
+		l.nvidiaCDIHookPath = path
+	}
+}
+
+// WithLdconfigPath sets the path to the ldconfig program
+func WithLdconfigPath(path string) Option {
+	return func(l *nvcdilib) {
+		l.ldconfigPath = path
 	}
 }
 
@@ -108,6 +138,13 @@ func WithCSVFiles(csvFiles []string) Option {
 func WithCSVIgnorePatterns(csvIgnorePatterns []string) Option {
 	return func(o *nvcdilib) {
 		o.csvIgnorePatterns = csvIgnorePatterns
+	}
+}
+
+// WithConfigSearchPaths sets the search paths for config files.
+func WithConfigSearchPaths(paths []string) Option {
+	return func(o *nvcdilib) {
+		o.configSearchPaths = paths
 	}
 }
 

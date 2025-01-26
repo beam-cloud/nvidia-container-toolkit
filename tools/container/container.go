@@ -21,10 +21,11 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/NVIDIA/nvidia-container-toolkit/pkg/config/engine"
-	"github.com/NVIDIA/nvidia-container-toolkit/tools/container/operator"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
+
+	"github.com/NVIDIA/nvidia-container-toolkit/pkg/config/engine"
+	"github.com/NVIDIA/nvidia-container-toolkit/tools/container/operator"
 )
 
 const (
@@ -157,6 +158,7 @@ func (o Options) SystemdRestart(service string) error {
 
 	logrus.Infof("Restarting %v%v using systemd: %v", service, msg, args)
 
+	//nolint:gosec // TODO: Can we harden this so that there is less risk of command injection
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

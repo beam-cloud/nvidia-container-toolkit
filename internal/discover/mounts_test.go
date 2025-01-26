@@ -20,8 +20,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/lookup"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/lookup"
 
 	testlog "github.com/sirupsen/logrus/hooks/test"
 )
@@ -99,7 +100,7 @@ func TestMounts(t *testing.T) {
 				lookup: &lookup.LocatorMock{
 					LocateFunc: func(s string) ([]string, error) {
 						if s == "error" {
-							return nil, fmt.Errorf(s)
+							return nil, fmt.Errorf("error")
 						}
 						return []string{s}, nil
 					},

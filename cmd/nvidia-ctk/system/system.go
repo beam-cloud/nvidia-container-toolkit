@@ -17,11 +17,11 @@
 package system
 
 import (
+	"github.com/urfave/cli/v2"
+
 	devchar "github.com/NVIDIA/nvidia-container-toolkit/cmd/nvidia-ctk/system/create-dev-char-symlinks"
 	devicenodes "github.com/NVIDIA/nvidia-container-toolkit/cmd/nvidia-ctk/system/create-device-nodes"
-	ldcache "github.com/NVIDIA/nvidia-container-toolkit/cmd/nvidia-ctk/system/print-ldcache"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
-	"github.com/urfave/cli/v2"
 )
 
 type command struct {
@@ -46,7 +46,6 @@ func (m command) build() *cli.Command {
 	system.Subcommands = []*cli.Command{
 		devchar.NewCommand(m.logger),
 		devicenodes.NewCommand(m.logger),
-		ldcache.NewCommand(m.logger),
 	}
 
 	return &system

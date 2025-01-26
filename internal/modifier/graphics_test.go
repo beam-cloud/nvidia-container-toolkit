@@ -19,14 +19,15 @@ package modifier
 import (
 	"testing"
 
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/config/image"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/config/image"
 )
 
 func TestGraphicsModifier(t *testing.T) {
 	testCases := []struct {
 		description      string
-		cudaImage        image.CUDA
+		envmap           map[string]string
 		expectedRequired bool
 	}{
 		{
@@ -34,20 +35,20 @@ func TestGraphicsModifier(t *testing.T) {
 		},
 		{
 			description: "devices with no capabilities does not create modifier",
-			cudaImage: image.CUDA{
+			envmap: map[string]string{
 				"NVIDIA_VISIBLE_DEVICES": "all",
 			},
 		},
 		{
 			description: "devices with no non-graphics does not create modifier",
-			cudaImage: image.CUDA{
+			envmap: map[string]string{
 				"NVIDIA_VISIBLE_DEVICES":     "all",
 				"NVIDIA_DRIVER_CAPABILITIES": "compute",
 			},
 		},
 		{
 			description: "devices with all capabilities creates modifier",
-			cudaImage: image.CUDA{
+			envmap: map[string]string{
 				"NVIDIA_VISIBLE_DEVICES":     "all",
 				"NVIDIA_DRIVER_CAPABILITIES": "all",
 			},
@@ -55,7 +56,7 @@ func TestGraphicsModifier(t *testing.T) {
 		},
 		{
 			description: "devices with graphics capability creates modifier",
-			cudaImage: image.CUDA{
+			envmap: map[string]string{
 				"NVIDIA_VISIBLE_DEVICES":     "all",
 				"NVIDIA_DRIVER_CAPABILITIES": "graphics",
 			},
@@ -63,7 +64,7 @@ func TestGraphicsModifier(t *testing.T) {
 		},
 		{
 			description: "devices with compute,graphics capability creates modifier",
-			cudaImage: image.CUDA{
+			envmap: map[string]string{
 				"NVIDIA_VISIBLE_DEVICES":     "all",
 				"NVIDIA_DRIVER_CAPABILITIES": "compute,graphics",
 			},
@@ -71,7 +72,7 @@ func TestGraphicsModifier(t *testing.T) {
 		},
 		{
 			description: "devices with display capability creates modifier",
-			cudaImage: image.CUDA{
+			envmap: map[string]string{
 				"NVIDIA_VISIBLE_DEVICES":     "all",
 				"NVIDIA_DRIVER_CAPABILITIES": "display",
 			},
@@ -79,7 +80,7 @@ func TestGraphicsModifier(t *testing.T) {
 		},
 		{
 			description: "devices with display,graphics capability creates modifier",
-			cudaImage: image.CUDA{
+			envmap: map[string]string{
 				"NVIDIA_VISIBLE_DEVICES":     "all",
 				"NVIDIA_DRIVER_CAPABILITIES": "display,graphics",
 			},
@@ -89,7 +90,10 @@ func TestGraphicsModifier(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			required, _ := requiresGraphicsModifier(tc.cudaImage)
+			image, _ := image.New(
+				image.WithEnvMap(tc.envmap),
+			)
+			required, _ := requiresGraphicsModifier(image)
 			require.EqualValues(t, tc.expectedRequired, required)
 		})
 	}

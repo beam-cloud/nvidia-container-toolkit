@@ -22,15 +22,12 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"unsafe"
 
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/lookup/symlinks"
 )
 
 const ldcachePath = "/etc/ld.so.cache"
@@ -81,9 +78,10 @@ type entry2 struct {
 }
 
 // LDCache represents the interface for performing lookups into the LDCache
+//
+//go:generate moq -rm -out ldcache_mock.go . LDCache
 type LDCache interface {
 	List() ([]string, []string)
-	Lookup(...string) ([]string, []string)
 }
 
 type ldcache struct {
@@ -187,7 +185,7 @@ type entry struct {
 }
 
 // getEntries returns the entires of the ldcache in a go-friendly struct.
-func (c *ldcache) getEntries(selected func(string) bool) []entry {
+func (c *ldcache) getEntries() []entry {
 	var entries []entry
 	for _, e := range c.entries {
 		bits := 0
@@ -214,9 +212,6 @@ func (c *ldcache) getEntries(selected func(string) bool) []entry {
 			c.logger.Debugf("Skipping invalid lib")
 			continue
 		}
-		if !selected(lib) {
-			continue
-		}
 		value := bytesToString(c.libs[e.Value:])
 		if value == "" {
 			c.logger.Debugf("Skipping invalid value for lib %v", lib)
@@ -227,51 +222,19 @@ func (c *ldcache) getEntries(selected func(string) bool) []entry {
 			bits:    bits,
 			value:   value,
 		}
-
 		entries = append(entries, e)
 	}
-
 	return entries
 }
 
-// List creates a list of libraires in the ldcache.
+// List creates a list of libraries in the ldcache.
 // The 32-bit and 64-bit libraries are returned separately.
 func (c *ldcache) List() ([]string, []string) {
-	all := func(s string) bool { return true }
-
-	return c.resolveSelected(all)
-}
-
-// Lookup searches the ldcache for the specified prefixes.
-// The 32-bit and 64-bit libraries matching the prefixes are returned.
-func (c *ldcache) Lookup(libPrefixes ...string) ([]string, []string) {
-	c.logger.Debugf("Looking up %v in cache", libPrefixes)
-
-	// We define a functor to check whether a given library name matches any of the prefixes
-	matchesAnyPrefix := func(s string) bool {
-		for _, p := range libPrefixes {
-			if strings.HasPrefix(s, p) {
-				return true
-			}
-		}
-		return false
-	}
-
-	return c.resolveSelected(matchesAnyPrefix)
-}
-
-// resolveSelected process the entries in the LDCach based on the supplied filter and returns the resolved paths.
-// The paths are separated by bittage.
-func (c *ldcache) resolveSelected(selected func(string) bool) ([]string, []string) {
 	paths := make(map[int][]string)
 	processed := make(map[string]bool)
 
-	for _, e := range c.getEntries(selected) {
-		path, err := c.resolve(e.value)
-		if err != nil {
-			c.logger.Debugf("Could not resolve entry: %v", err)
-			continue
-		}
+	for _, e := range c.getEntries() {
+		path := filepath.Join(c.root, e.value)
 		if processed[path] {
 			continue
 		}
@@ -280,29 +243,6 @@ func (c *ldcache) resolveSelected(selected func(string) bool) ([]string, []strin
 	}
 
 	return paths[32], paths[64]
-}
-
-// resolve resolves the specified ldcache entry based on the value being processed.
-// The input is the name of the entry in the cache.
-func (c *ldcache) resolve(target string) (string, error) {
-	name := filepath.Join(c.root, target)
-
-	c.logger.Debugf("checking %v", string(name))
-
-	link, err := symlinks.Resolve(name)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve symlink: %v", err)
-	}
-	if link == name {
-		return name, nil
-	}
-
-	// We return absolute paths for all targets
-	if !filepath.IsAbs(link) || strings.HasPrefix(link, ".") {
-		link = filepath.Join(filepath.Dir(target), link)
-	}
-
-	return c.resolve(link)
 }
 
 // bytesToString converts a byte slice to a string.

@@ -25,11 +25,12 @@ import (
 )
 
 // NewLDCacheUpdateHook creates a discoverer that updates the ldcache for the specified mounts. A logger can also be specified
-func NewLDCacheUpdateHook(logger logger.Interface, mounts Discover, nvidiaCTKPath string) (Discover, error) {
+func NewLDCacheUpdateHook(logger logger.Interface, mounts Discover, nvidiaCDIHookPath, ldconfigPath string) (Discover, error) {
 	d := ldconfig{
-		logger:        logger,
-		nvidiaCTKPath: nvidiaCTKPath,
-		mountsFrom:    mounts,
+		logger:            logger,
+		nvidiaCDIHookPath: nvidiaCDIHookPath,
+		ldconfigPath:      ldconfigPath,
+		mountsFrom:        mounts,
 	}
 
 	return &d, nil
@@ -37,9 +38,10 @@ func NewLDCacheUpdateHook(logger logger.Interface, mounts Discover, nvidiaCTKPat
 
 type ldconfig struct {
 	None
-	logger        logger.Interface
-	nvidiaCTKPath string
-	mountsFrom    Discover
+	logger            logger.Interface
+	nvidiaCDIHookPath string
+	ldconfigPath      string
+	mountsFrom        Discover
 }
 
 // Hooks checks the required mounts for libraries and returns a hook to update the LDcache for the discovered paths.
@@ -49,27 +51,32 @@ func (d ldconfig) Hooks() ([]Hook, error) {
 		return nil, fmt.Errorf("failed to discover mounts for ldcache update: %v", err)
 	}
 	h := CreateLDCacheUpdateHook(
-		d.nvidiaCTKPath,
+		d.nvidiaCDIHookPath,
+		d.ldconfigPath,
 		getLibraryPaths(mounts),
 	)
 	return []Hook{h}, nil
 }
 
 // CreateLDCacheUpdateHook locates the NVIDIA Container Toolkit CLI and creates a hook for updating the LD Cache
-func CreateLDCacheUpdateHook(executable string, libraries []string) Hook {
+func CreateLDCacheUpdateHook(executable string, ldconfig string, libraries []string) Hook {
 	var args []string
+
+	if ldconfig != "" {
+		args = append(args, "--ldconfig-path", ldconfig)
+	}
+
 	for _, f := range uniqueFolders(libraries) {
 		args = append(args, "--folder", f)
 	}
 
-	hook := CreateNvidiaCTKHook(
+	hook := CreateNvidiaCDIHook(
 		executable,
 		"update-ldcache",
 		args...,
 	)
 
 	return hook
-
 }
 
 // getLibraryPaths extracts the library dirs from the specified mounts
@@ -86,7 +93,6 @@ func getLibraryPaths(mounts []Mount) []string {
 
 // isLibName checks if the specified filename is a library (i.e. ends in `.so*`)
 func isLibName(filename string) bool {
-
 	base := filepath.Base(filename)
 
 	isLib, err := filepath.Match("lib?*.so*", base)

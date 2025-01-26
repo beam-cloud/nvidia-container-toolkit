@@ -23,33 +23,51 @@ import (
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/config/image"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/discover"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
+	"github.com/NVIDIA/nvidia-container-toolkit/internal/lookup/root"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/oci"
 )
 
 // NewGraphicsModifier constructs a modifier that injects graphics-related modifications into an OCI runtime specification.
 // The value of the NVIDIA_DRIVER_CAPABILITIES environment variable is checked to determine if this modification should be made.
-func NewGraphicsModifier(logger logger.Interface, cfg *config.Config, image image.CUDA) (oci.SpecModifier, error) {
-	if required, reason := requiresGraphicsModifier(image); !required {
+func NewGraphicsModifier(logger logger.Interface, cfg *config.Config, containerImage image.CUDA, driver *root.Driver) (oci.SpecModifier, error) {
+	if required, reason := requiresGraphicsModifier(containerImage); !required {
 		logger.Infof("No graphics modifier required: %v", reason)
 		return nil, nil
 	}
 
-	d, err := discover.NewGraphicsDiscoverer(
+	nvidiaCDIHookPath := cfg.NVIDIACTKConfig.Path
+
+	mounts, err := discover.NewGraphicsMountsDiscoverer(
 		logger,
-		image.DevicesFromEnvvars(visibleDevicesEnvvar),
-		cfg.NVIDIAContainerCLIConfig.Root,
-		cfg.NVIDIACTKConfig.Path,
+		driver,
+		nvidiaCDIHookPath,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create mounts discoverer: %v", err)
+	}
+
+	// In standard usage, the devRoot is the same as the driver.Root.
+	devRoot := driver.Root
+	drmNodes, err := discover.NewDRMNodesDiscoverer(
+		logger,
+		containerImage.DevicesFromEnvvars(image.EnvVarNvidiaVisibleDevices),
+		devRoot,
+		nvidiaCDIHookPath,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to construct discoverer: %v", err)
 	}
 
+	d := discover.Merge(
+		drmNodes,
+		mounts,
+	)
 	return NewModifierFromDiscoverer(logger, d)
 }
 
 // requiresGraphicsModifier determines whether a graphics modifier is required.
 func requiresGraphicsModifier(cudaImage image.CUDA) (bool, string) {
-	if devices := cudaImage.DevicesFromEnvvars(visibleDevicesEnvvar); len(devices.List()) == 0 {
+	if devices := cudaImage.VisibleDevicesFromEnvVar(); len(devices) == 0 {
 		return false, "no devices requested"
 	}
 

@@ -19,10 +19,11 @@ package defaultsubcommand
 import (
 	"fmt"
 
+	"github.com/urfave/cli/v2"
+
 	"github.com/NVIDIA/nvidia-container-toolkit/cmd/nvidia-ctk/config/flags"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/config"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/logger"
-	"github.com/urfave/cli/v2"
 )
 
 type command struct {
@@ -85,8 +86,7 @@ func (m command) run(c *cli.Context, opts *flags.Options) error {
 	}
 	defer output.Close()
 
-	_, err = cfgToml.Save(output)
-	if err != nil {
+	if _, err = cfgToml.Save(output); err != nil {
 		return fmt.Errorf("failed to write output: %v", err)
 	}
 

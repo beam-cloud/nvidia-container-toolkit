@@ -20,7 +20,7 @@ import (
 	"fmt"
 
 	"github.com/NVIDIA/nvidia-container-toolkit/pkg/config/engine"
-	"github.com/pelletier/go-toml"
+	"github.com/NVIDIA/nvidia-container-toolkit/pkg/config/toml"
 )
 
 // ConfigV1 represents a version 1 containerd config
@@ -38,13 +38,20 @@ func (c *ConfigV1) AddRuntime(name string, path string, setAsDefault bool) error
 
 	config.Set("version", int64(1))
 
-	switch runc := config.GetPath([]string{"plugins", "cri", "containerd", "runtimes", "runc"}).(type) {
-	case *toml.Tree:
-		runc, _ = toml.Load(runc.String())
-		config.SetPath([]string{"plugins", "cri", "containerd", "runtimes", name}, runc)
+	runtimeNamesForConfig := engine.GetLowLevelRuntimes(c)
+	for _, r := range runtimeNamesForConfig {
+		options := config.GetSubtreeByPath([]string{"plugins", "cri", "containerd", "runtimes", r})
+		if options == nil {
+			continue
+		}
+		c.Logger.Debugf("using options from runtime %v: %v", r, options)
+		config.SetPath([]string{"plugins", "cri", "containerd", "runtimes", name}, options.Copy())
+		break
+
 	}
 
 	if config.GetPath([]string{"plugins", "cri", "containerd", "runtimes", name}) == nil {
+		c.Logger.Warningf("could not infer options from runtimes %v; using defaults", runtimeNamesForConfig)
 		config.SetPath([]string{"plugins", "cri", "containerd", "runtimes", name, "runtime_type"}, c.RuntimeType)
 		config.SetPath([]string{"plugins", "cri", "containerd", "runtimes", name, "runtime_root"}, "")
 		config.SetPath([]string{"plugins", "cri", "containerd", "runtimes", name, "runtime_engine"}, "")
@@ -134,7 +141,25 @@ func (c *ConfigV1) RemoveRuntime(name string) error {
 	return nil
 }
 
-// Save wrotes the config to a file
+// Set sets the specified containerd option.
+func (c *ConfigV1) Set(key string, value interface{}) {
+	config := *c.Tree
+	config.SetPath([]string{"plugins", "cri", "containerd", key}, value)
+	*c.Tree = config
+}
+
+// Save writes the config to a file
 func (c ConfigV1) Save(path string) (int64, error) {
 	return (Config)(c).Save(path)
+}
+
+func (c *ConfigV1) GetRuntimeConfig(name string) (engine.RuntimeConfig, error) {
+	if c == nil || c.Tree == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+	runtimeData := c.GetSubtreeByPath([]string{"plugins", "cri", "containerd", "runtimes", name})
+
+	return &containerdCfgRuntime{
+		tree: runtimeData,
+	}, nil
 }
