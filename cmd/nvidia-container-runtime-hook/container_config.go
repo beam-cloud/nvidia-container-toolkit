@@ -294,10 +294,10 @@ func (hookConfig *hookConfig) getContainerConfig(OCIConfigPath string) (config c
 		log.Panicln("could not decode container state:", err)
 	}
 
-	b := h.Bundle
-	if len(b) == 0 {
-		b = h.BundlePath
-	}
+	// b := h.Bundle
+	// if len(b) == 0 {
+	// 	b = h.BundlePath
+	// }
 
 	log.Println("Using config path: ", OCIConfigPath)
 	s := loadSpec(OCIConfigPath)
